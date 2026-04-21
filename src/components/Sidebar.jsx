@@ -1,183 +1,220 @@
 import { useState } from 'react'
-import { LayoutDashboard, Users, Car, Map, Settings, Bell, LogOut, Building2, ChevronRight, ChevronDown, AlertTriangle, Check } from 'lucide-react'
+import {
+  LayoutDashboard, Route, Car, Users, Calendar, ClipboardList,
+  Building, Package, RefreshCw, Bell, Settings as SettingsIcon,
+  ChevronDown, ChevronRight, LogOut, Check, Search
+} from 'lucide-react'
+import { FACILITY_OPTIONS } from '../data/facilitiesData'
 
 const NAV = [
-  { id: 'dashboard',     label: 'ダッシュボード', icon: LayoutDashboard },
-  { id: 'customers',     label: '顧客管理',       icon: Users },
-  { id: 'transport',     label: '送迎管理',       icon: Car },
-  { id: 'route',         label: 'ルート最適化',   icon: Map },
+  { group: 'オペレーション', items: [
+    { id: 'dashboard',  label: 'ダッシュボード', icon: LayoutDashboard },
+    { id: 'route',      label: 'ルート最適化',   icon: Route, accent: true },
+    { id: 'transport',  label: '送迎管理',       icon: Car },
+    { id: 'attendance', label: '入退室記録',     icon: Calendar },
+  ]},
+  { group: '児童・支援', items: [
+    { id: 'children',   label: '児童管理',       icon: Users },
+    { id: 'support',    label: '個別支援計画',   icon: ClipboardList },
+  ]},
+  { group: '拠点・備品', items: [
+    { id: 'facility',   label: '施設管理',       icon: Building },
+    { id: 'equipment',  label: '備品・教具',     icon: Package },
+  ]},
+  { group: 'システム', items: [
+    { id: 'hug',           label: 'HUG連携',  icon: RefreshCw },
+    { id: 'notifications', label: '通知',     icon: Bell, badge: 3 },
+    { id: 'settings',      label: '設定',     icon: SettingsIcon },
+  ]},
 ]
 
-const NOTIFICATIONS_COUNT = 3
-
-const FACILITY_COLORS = {
-  'すべて':          '#64748b',
-  'にじいろPLUS':    '#2e7df7',
-  'にじいろPALETTE': '#22c55e',
-  'にじいろLABO':    '#f59e0b',
-  'NIJIIRONOBA':     '#8b5cf6',
-  'にじいろPROGRESS':'#ef4444',
-}
-
-function NavBtn({ id, label, icon: Icon, current, onNavigate, badge }) {
-  const active = current === id
-  return (
-    <button onClick={() => onNavigate(id)} style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '10px 12px', borderRadius: 8,
-      background: active ? 'var(--accent)' : 'transparent',
-      color: active ? 'white' : 'rgba(255,255,255,0.55)',
-      border: 'none', cursor: 'pointer', width: '100%',
-      fontSize: 13, fontWeight: active ? 600 : 400,
-      fontFamily: 'inherit', transition: 'background 0.15s', textAlign: 'left',
-    }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.07)' }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
-    >
-      <Icon size={16} style={{ flexShrink: 0 }} />
-      <span style={{ flex: 1 }}>{label}</span>
-      {badge > 0 && !active && (
-        <span style={{ background: '#ef4444', color: 'white', borderRadius: 999, fontSize: 10, fontWeight: 700, padding: '1px 6px', lineHeight: 1.6 }}>{badge}</span>
-      )}
-      {active && <ChevronRight size={13} style={{ opacity: 0.7, flexShrink: 0 }} />}
-    </button>
-  )
-}
-
-export default function Sidebar({ current, onNavigate, facility, onFacilityChange, facilities }) {
-  const [showLogout, setShowLogout] = useState(false)
+export default function Sidebar({ current, onNavigate, facilityId, onFacilityChange }) {
   const [facilityOpen, setFacilityOpen] = useState(false)
+  const [search, setSearch] = useState('')
 
-  const facilityColor = FACILITY_COLORS[facility] || '#64748b'
-  const isAll = facility === 'すべて'
+  const selected = FACILITY_OPTIONS.find(f => f.id === facilityId) || FACILITY_OPTIONS[0]
+  const filtered = FACILITY_OPTIONS.filter(f =>
+    !search || f.name.includes(search) || f.short.toLowerCase().includes(search.toLowerCase())
+  )
 
   return (
     <aside style={{
-      width: 240, background: 'var(--sidebar)',
-      display: 'flex', flexDirection: 'column', flexShrink: 0,
-      position: 'sticky', top: 0, height: '100vh', overflow: 'hidden',
+      width: 248, flexShrink: 0, background: 'var(--ink-panel)',
+      display: 'flex', flexDirection: 'column',
+      position: 'sticky', top: 0, height: '100vh',
+      borderRight: '1px solid rgba(255,255,255,0.06)',
     }}>
-      {/* Logo */}
-      <div style={{ padding: '22px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+      {/* ─── Brand ─── */}
+      <div style={{ padding: '20px 22px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Building2 size={18} color="white" />
+          {/* Mark: 13 colored stripes as logo (rainbow concept) */}
+          <div style={{ display: 'flex', gap: 1.5, alignItems: 'flex-end', height: 22 }}>
+            {FACILITY_OPTIONS.slice(1, 9).map((f, i) => (
+              <div key={f.id} style={{
+                width: 2, height: [16, 22, 14, 20, 12, 18, 22, 16][i],
+                background: f.color, borderRadius: 1, opacity: 0.85,
+              }} />
+            ))}
           </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ color: 'white', fontWeight: 700, fontSize: 14, lineHeight: 1.2 }}>にじいろ</div>
-            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, letterSpacing: '0.05em' }}>管理システム</div>
+          <div>
+            <div style={{ color: '#fff', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em', lineHeight: 1 }}>
+              Nijiiro
+            </div>
+            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', marginTop: 2 }}>
+              Operations
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── 施設セレクター ── */}
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', flexShrink: 0, position: 'relative' }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.07em', marginBottom: 6, textTransform: 'uppercase' }}>表示施設</div>
-
-        {/* Trigger */}
+      {/* ─── Facility selector ─── */}
+      <div style={{ padding: '12px 14px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}>
+        <div style={{
+          fontFamily: 'var(--font-display)', fontSize: 9, fontWeight: 600,
+          letterSpacing: '0.18em', color: 'rgba(255,255,255,0.35)',
+          marginBottom: 6, textTransform: 'uppercase', paddingLeft: 2,
+        }}>
+          表示施設
+        </div>
         <button
           onClick={() => setFacilityOpen(o => !o)}
           style={{
-            width: '100%', background: 'rgba(255,255,255,0.06)',
-            border: `1px solid ${facilityOpen ? facilityColor : 'rgba(255,255,255,0.1)'}`,
-            borderRadius: 8, padding: '8px 10px', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'inherit',
+            width: '100%', background: 'rgba(255,255,255,0.04)',
+            border: `1px solid ${facilityOpen ? selected.color : 'rgba(255,255,255,0.08)'}`,
+            borderRadius: 8, padding: '9px 11px',
+            display: 'flex', alignItems: 'center', gap: 10,
             transition: 'border-color 0.15s',
           }}
         >
-          {/* dot */}
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: facilityColor, flexShrink: 0 }} />
-          <span style={{ flex: 1, color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: 600, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {facility}
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: selected.color, flexShrink: 0 }} />
+          <span style={{ flex: 1, color: '#fff', fontSize: 12, fontWeight: 600, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selected.name}
           </span>
-          <ChevronDown size={13} color="rgba(255,255,255,0.4)" style={{ flexShrink: 0, transform: facilityOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+          <ChevronDown size={13} color="rgba(255,255,255,0.4)" style={{ transform: facilityOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }} />
         </button>
 
-        {/* Dropdown */}
         {facilityOpen && (
           <div style={{
-            position: 'absolute', top: 'calc(100% - 6px)', left: 14, right: 14,
-            background: '#1e293b', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 10, zIndex: 100, overflow: 'hidden',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            position: 'absolute', top: 'calc(100% - 2px)', left: 14, right: 14, zIndex: 100,
+            background: '#262833', border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 10, overflow: 'hidden',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+            maxHeight: 420, display: 'flex', flexDirection: 'column',
           }}>
-            {facilities.map(f => {
-              const selected = facility === f
-              const color = FACILITY_COLORS[f] || '#64748b'
-              return (
-                <button
-                  key={f}
-                  onClick={() => { onFacilityChange(f); setFacilityOpen(false) }}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '9px 12px', background: selected ? 'rgba(255,255,255,0.08)' : 'transparent',
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    color: selected ? 'white' : 'rgba(255,255,255,0.6)',
-                    fontSize: 12, fontWeight: selected ? 600 : 400, textAlign: 'left',
-                    transition: 'background 0.1s',
-                  }}
-                  onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                  onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent' }}
-                >
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>{f}</span>
-                  {selected && <Check size={12} color={color} style={{ flexShrink: 0 }} />}
-                </button>
-              )
-            })}
+            <div style={{ padding: '8px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.05)', borderRadius: 6, padding: '5px 9px' }}>
+                <Search size={12} color="rgba(255,255,255,0.4)" />
+                <input
+                  autoFocus
+                  placeholder="施設を検索"
+                  value={search} onChange={e => setSearch(e.target.value)}
+                  style={{ flex: 1, background: 'transparent', border: 'none', padding: 0, color: '#fff', fontSize: 11 }}
+                />
+              </div>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {filtered.map(f => {
+                const active = f.id === facilityId
+                return (
+                  <button key={f.id}
+                    onClick={() => { onFacilityChange(f.id); setFacilityOpen(false); setSearch('') }}
+                    style={{
+                      width: '100%', padding: '8px 11px',
+                      display: 'flex', alignItems: 'center', gap: 9,
+                      background: active ? 'rgba(255,255,255,0.07)' : 'transparent',
+                      color: active ? '#fff' : 'rgba(255,255,255,0.65)',
+                      fontSize: 11, fontWeight: active ? 600 : 400, textAlign: 'left',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: f.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    {f.service && <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>{f.service}</span>}
+                    {active && <Check size={11} color={f.color} />}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Nav */}
-      <nav style={{ flex: 1, padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', padding: '2px 12px 8px', textTransform: 'uppercase' }}>メニュー</div>
-        {NAV.map(n => <NavBtn key={n.id} {...n} current={current} onNavigate={(id) => { onNavigate(id); setFacilityOpen(false) }} />)}
-
-        <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', padding: '14px 12px 8px', textTransform: 'uppercase' }}>その他</div>
-        <NavBtn id="notifications" label="通知" icon={Bell} current={current} onNavigate={onNavigate} badge={NOTIFICATIONS_COUNT} />
-        <NavBtn id="settings" label="設定" icon={Settings} current={current} onNavigate={onNavigate} />
+      {/* ─── Nav ─── */}
+      <nav style={{ flex: 1, padding: '10px 12px', overflowY: 'auto' }}>
+        {NAV.map((group, gi) => (
+          <div key={group.group} style={{ marginBottom: gi < NAV.length - 1 ? 14 : 0 }}>
+            <div style={{
+              fontFamily: 'var(--font-display)', fontSize: 9, fontWeight: 600,
+              letterSpacing: '0.18em', color: 'rgba(255,255,255,0.3)',
+              padding: '6px 10px 8px', textTransform: 'uppercase',
+            }}>
+              {group.group}
+            </div>
+            {group.items.map(item => (
+              <NavItem key={item.id} {...item} current={current} onNavigate={onNavigate} />
+            ))}
+          </div>
+        ))}
       </nav>
 
-      {/* User + Logout */}
-      <div style={{ flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.08)', padding: '10px 12px' }}>
-        {showLogout ? (
-          <div style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <AlertTriangle size={13} color="#fca5a5" />
-              <span style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12 }}>ログアウトしますか？</span>
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button style={{ flex: 1, padding: '7px 0', borderRadius: 7, border: 'none', cursor: 'pointer', background: '#ef4444', color: 'white', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                <LogOut size={12} />ログアウト
-              </button>
-              <button onClick={() => setShowLogout(false)} style={{ flex: 1, padding: '7px 0', borderRadius: 7, border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer', background: 'transparent', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontFamily: 'inherit' }}>
-                キャンセル
-              </button>
-            </div>
+      {/* ─── User ─── */}
+      <div style={{ flexShrink: 0, padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px' }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: 8,
+            background: 'linear-gradient(135deg,#c04a2a,#3a6b4e)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 12, color: '#fff', fontWeight: 700, flexShrink: 0,
+            fontFamily: 'var(--font-display)',
+          }}>
+            松
           </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 4px' }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg, #2e7df7, #7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'white', fontWeight: 700, flexShrink: 0 }}>松</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>松岡 担当</div>
-              <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>システム管理者</div>
-            </div>
-            <button onClick={() => setShowLogout(true)} title="ログアウト" style={{
-              flexShrink: 0, width: 30, height: 30,
-              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 8, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'rgba(255,255,255,0.4)', transition: 'all 0.15s',
-            }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.25)'; e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)'; e.currentTarget.style.color = '#fca5a5' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)' }}
-            >
-              <LogOut size={14} />
-            </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: '#fff', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>松岡 祐輝</div>
+            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 9, letterSpacing: '0.05em' }}>AI CHAIN / ADMIN</div>
           </div>
-        )}
+          <button style={{ padding: 6, color: 'rgba(255,255,255,0.5)', display: 'flex', borderRadius: 5 }}
+            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <LogOut size={14} />
+          </button>
+        </div>
       </div>
     </aside>
+  )
+}
+
+function NavItem({ id, label, icon: Icon, badge, accent, current, onNavigate }) {
+  const active = current === id
+  return (
+    <button
+      onClick={() => onNavigate(id)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+        padding: '8px 10px', borderRadius: 6, marginBottom: 1,
+        background: active ? 'rgba(192, 74, 42, 0.18)' : 'transparent',
+        color: active ? '#fff' : 'rgba(255,255,255,0.58)',
+        fontSize: 13, fontWeight: active ? 600 : 400, textAlign: 'left',
+        transition: 'background 0.1s',
+        position: 'relative',
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+    >
+      {active && <div style={{ position: 'absolute', left: -13, top: 8, bottom: 8, width: 3, borderRadius: '0 2px 2px 0', background: 'var(--accent)' }} />}
+      <Icon size={15} style={{ flexShrink: 0, opacity: active ? 1 : 0.75 }} />
+      <span style={{ flex: 1 }}>{label}</span>
+      {accent && !active && (
+        <span style={{ fontSize: 9, color: 'var(--accent)', background: 'rgba(192,74,42,0.15)', padding: '1px 6px', borderRadius: 3, fontWeight: 700, letterSpacing: '0.08em' }}>
+          CORE
+        </span>
+      )}
+      {badge > 0 && !active && (
+        <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: 999, fontSize: 9, fontWeight: 700, padding: '1px 6px', fontFamily: 'var(--font-mono)' }}>{badge}</span>
+      )}
+      {active && <ChevronRight size={12} style={{ opacity: 0.7, flexShrink: 0 }} />}
+    </button>
   )
 }

@@ -1,736 +1,769 @@
-import { useState, useRef } from 'react'
-import {
-  Map, Zap, Navigation, Car, Clock, Users, AlertTriangle,
-  ChevronRight, ChevronDown, ChevronUp, RotateCcw, ExternalLink,
-  CheckCircle2, Circle, XCircle, GripVertical, Plus, Minus,
-  Star, AlertCircle, ArrowRight, Play, RefreshCw, Home
-} from 'lucide-react'
-import { customers, vehicles } from '../data/mockData'
+// フラグシップ画面：ルート最適化
+// 3ステップ構成:
+//   STEP 1: 条件設定（日付・方向・制約）
+//   STEP 2: シミュレーション実行（Pattern A/B 並列）
+//   STEP 3: 結果採用 & Googleマップ連携
+//
+// 目玉:
+// - 大きなSVG地図（春日井エリア）
+// - Pattern A/B 並列比較（OR-Tools VRP vs ヒューリスティック）
+// - 未配置者パネル（松浦先生認知モデル）
+// - 制約チップ（支援時間1h35m / 18:30退勤 / 国道NG / 同乗NG / 性別配慮）
+// - Google Maps ナビ連携
 
-// ── 定数 ──────────────────────────────────────
-const PRIORITY_OPTS = [
-  { value: 1, label: '最優先', color: '#ef4444', icon: '🔴' },
-  { value: 2, label: '高',     color: '#f59e0b', icon: '🟠' },
-  { value: 3, label: '標準',   color: '#2e7df7', icon: '🔵' },
-  { value: 4, label: '低',     color: '#94a3b8', icon: '⚪' },
+import { useState, useMemo } from 'react'
+import {
+  Zap, Play, MapPin, Clock, AlertTriangle, Shield, Users, Car,
+  RefreshCw, ChevronRight, CheckCircle2, X, Download, Map, Navigation,
+  Sliders, FlaskConical, Hash, Route, Eye
+} from 'lucide-react'
+import KasugaiMap from '../components/KasugaiMap'
+import UnassignedPanel from '../components/UnassignedPanel'
+import { CHILDREN, CHILD_BY_ID } from '../data/childrenData'
+import { VEHICLES, VEHICLE_BY_ID } from '../data/vehiclesData'
+import { SIMULATION_A, SIMULATION_B, BASE } from '../data/routesData'
+import { FACILITY_BY_ID } from '../data/facilitiesData'
+import { LOC_BY_ID } from '../data/schoolsData'
+
+const TODAY = new Date()
+const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+
+const CONSTRAINTS = [
+  { id: 'supportTime', label: '支援時間1h35m以上', req: true, desc: '補助金要件のMUST制約' },
+  { id: 'endTime',     label: '18:30までに職員退勤', req: true, desc: '職員退勤時刻' },
+  { id: 'returnTime',  label: '19:30までに帰着',     req: true, desc: '代表推奨条件' },
+  { id: 'noHighway',   label: '国道をまたがない',     req: false, desc: '渋滞回避' },
+  { id: 'noMixedSex',  label: '性別配慮',             req: false, desc: '異性ペアを避ける' },
+  { id: 'ngPair',      label: '同乗NGペア分離',        req: true, desc: '児童間の相性制約' },
+  { id: 'crossFac',    label: '施設横断送迎',          req: false, desc: '法人内の合同送迎' },
 ]
 
-const BASE = { name: 'にじいろPLUS（出発地）', address: '愛知県春日井市篠木町2丁目1281番地1', lat: 35.255, lng: 136.970 }
+export default function RouteOptimize({ facilityId, setPage }) {
+  const [step, setStep] = useState(1)
+  const [date, setDate] = useState(isoDate(TODAY))
+  const [direction, setDirection] = useState('pickup')
+  const [activeConstraints, setActiveConstraints] = useState(['supportTime','endTime','returnTime','noHighway','ngPair'])
+  const [includeCrossOrg, setIncludeCrossOrg] = useState(true)
+  const [excludedIds, setExcludedIds] = useState(['c25']) // イレギュラー児童はデフォで除外
 
-const STOP_STATUS = { waiting: 'waiting', inProgress: 'inProgress', done: 'done', skipped: 'skipped' }
+  // Step 2 state
+  const [calculating, setCalculating] = useState(false)
+  const [selectedPattern, setSelectedPattern] = useState(null) // 'A' | 'B'
+  const [selectedVehicle, setSelectedVehicle] = useState(null)
+  const [highlightChildId, setHighlightChildId] = useState(null)
 
-// Google Maps ナビURL生成
-const buildMapsUrl = (stops) => {
-  const addrs = stops.map(s => encodeURIComponent(s.address))
-  const origin = addrs[0]
-  const dest = addrs[addrs.length - 1]
-  const waypoints = addrs.slice(1, -1).join('|')
-  return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypoints ? `&waypoints=${waypoints}` : ''}&travelmode=driving`
-}
+  const transportChildren = useMemo(() =>
+    CHILDREN.filter(c =>
+      c.transport &&
+      c.status === 'active' &&
+      !excludedIds.includes(c.id) &&
+      (facilityId === 'all' || c.facility === facilityId)
+    ),
+  [facilityId, excludedIds])
 
-// 最適化シミュレーション（優先度 + 時間窓ベースのソート）
-const optimizeRoute = (conditions) => {
-  const sorted = [...conditions]
-    .filter(c => !c.excluded)
-    .sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority
-      const aTime = a.arriveBy || '99:99'
-      const bTime = b.arriveBy || '99:99'
-      return aTime.localeCompare(bTime)
-    })
-  return sorted
-}
+  const toggleConstraint = (id) => setActiveConstraints(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
+  const toggleExclude = (id) => setExcludedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
 
-// 時刻計算（分）
-const addMinutes = (timeStr, mins) => {
-  if (!timeStr) return ''
-  const [h, m] = timeStr.split(':').map(Number)
-  const total = h * 60 + m + mins
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
-}
-
-// ── メインコンポーネント ────────────────────────
-export default function RouteOptimize({ facility }) {
-  // Step: 'setup' | 'result' | 'driving'
-  const [step, setStep] = useState('setup')
-  const [selectedVehicle, setSelectedVehicle] = useState(vehicles[0])
-  const [selectedDate, setSelectedDate] = useState('2026-04-10')
-  const [routeType, setRouteType] = useState('pickup') // pickup | dropoff
-
-  // 対象児童リスト（条件付き）
-  const transportList = customers.filter(c => c.transport)
-  const [conditions, setConditions] = useState(
-    transportList.map(c => ({
-      id: c.id, name: c.name, address: c.address, facility: c.facility,
-      arriveAfter: '',    // 何時以降
-      arriveBy: '',       // 何時まで
-      priority: 3,        // 1=最優先〜4=低
-      note: '',           // メモ
-      excluded: false,    // 除外
-    }))
-  )
-
-  // 最適化済みルート
-  const [optimizedStops, setOptimizedStops] = useState([])
-  const [isOptimizing, setIsOptimizing] = useState(false)
-
-  // 運行中状態
-  const [stopStatuses, setStopStatuses] = useState({})
-  const [currentStopIdx, setCurrentStopIdx] = useState(0)
-  const [reoptimizing, setReoptimizing] = useState(false)
-  const [showReoptConfirm, setShowReoptConfirm] = useState(false)
-
-  const updateCondition = (id, field, value) => {
-    setConditions(prev => prev.map(c => c.id === id ? { ...c, [field]: value } : c))
-  }
-
-  const handleOptimize = () => {
-    setIsOptimizing(true)
+  const runSimulation = () => {
+    setCalculating(true)
     setTimeout(() => {
-      const sorted = optimizeRoute(conditions)
-      let time = '13:30'
-      const stops = sorted.map((c, i) => {
-        const est = addMinutes(time, 10 + i * 12)
-        time = est
-        return { ...c, estimatedTime: est, status: STOP_STATUS.waiting }
-      })
-      setOptimizedStops(stops)
-      setStopStatuses(Object.fromEntries(stops.map(s => [s.id, STOP_STATUS.waiting])))
-      setCurrentStopIdx(0)
-      setIsOptimizing(false)
-      setStep('result')
-    }, 1600)
+      setCalculating(false)
+      setStep(2)
+    }, 1400)
   }
 
-  const startDriving = () => {
-    setStep('driving')
+  const adoptPattern = (pat) => {
+    setSelectedPattern(pat)
+    setStep(3)
   }
-
-  const markDone = (id) => {
-    setStopStatuses(p => ({ ...p, [id]: STOP_STATUS.done }))
-    const nextIdx = optimizedStops.findIndex((s, i) => i > currentStopIdx && stopStatuses[s.id] === STOP_STATUS.waiting)
-    if (nextIdx !== -1) setCurrentStopIdx(nextIdx)
-    else setCurrentStopIdx(p => p + 1)
-  }
-
-  const markSkipped = (id) => {
-    setStopStatuses(p => ({ ...p, [id]: STOP_STATUS.skipped }))
-  }
-
-  const handleReoptimize = () => {
-    setReoptimizing(true)
-    setShowReoptConfirm(false)
-    setTimeout(() => {
-      // 完了済み・スキップ済みを除いた残りを再最適化
-      const remaining = optimizedStops.filter(s =>
-        stopStatuses[s.id] === STOP_STATUS.waiting || stopStatuses[s.id] === STOP_STATUS.inProgress
-      )
-      const done = optimizedStops.filter(s =>
-        stopStatuses[s.id] === STOP_STATUS.done || stopStatuses[s.id] === STOP_STATUS.skipped
-      )
-      const reoptimized = [...done, ...remaining]
-      setOptimizedStops(reoptimized)
-      setCurrentStopIdx(done.length)
-      setReoptimizing(false)
-    }, 1200)
-  }
-
-  const mapsUrl = optimizedStops.length > 0
-    ? buildMapsUrl([BASE, ...optimizedStops, BASE])
-    : '#'
-
-  const doneCount = optimizedStops.filter(s => stopStatuses[s.id] === STOP_STATUS.done).length
-  const totalCount = optimizedStops.length
-  const progress = totalCount > 0 ? (doneCount / totalCount) * 100 : 0
 
   return (
     <div>
-      {/* ── ページヘッダー ── */}
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div className="page-title">ルート最適化</div>
-            <div className="page-subtitle">条件を設定して最適な送迎順序を自動計算・ナビ連携</div>
-          </div>
-          {step !== 'setup' && (
-            <button className="btn btn-ghost" onClick={() => { setStep('setup'); setOptimizedStops([]) }}>
-              <RotateCcw size={14} /> 最初から
-            </button>
-          )}
+      <PageHead step={step} setStep={setStep} />
+
+      {/* Step 1: Conditions */}
+      {step === 1 && (
+        <Step1
+          date={date} setDate={setDate}
+          direction={direction} setDirection={setDirection}
+          activeConstraints={activeConstraints} toggleConstraint={toggleConstraint}
+          includeCrossOrg={includeCrossOrg} setIncludeCrossOrg={setIncludeCrossOrg}
+          excludedIds={excludedIds} toggleExclude={toggleExclude}
+          transportChildren={transportChildren}
+          calculating={calculating}
+          runSimulation={runSimulation}
+        />
+      )}
+
+      {/* Step 2: Simulation results */}
+      {step === 2 && (
+        <Step2
+          date={date} direction={direction}
+          adoptPattern={adoptPattern}
+          selectedVehicle={selectedVehicle} setSelectedVehicle={setSelectedVehicle}
+          highlightChildId={highlightChildId} setHighlightChildId={setHighlightChildId}
+        />
+      )}
+
+      {/* Step 3: Adopted */}
+      {step === 3 && (
+        <Step3
+          pattern={selectedPattern}
+          date={date} direction={direction}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// PAGE HEAD
+// ─────────────────────────────────────────────
+function PageHead({ step, setStep }) {
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <div className="page-eyebrow">Core Operation · Flagship</div>
+          <h1 className="page-title">送迎ルート最適化</h1>
+          <p className="page-sub">
+            支援時間・退勤時刻・国道・同乗配慮・性別分離などの制約下で、OR-Tools VRPと近傍ヒューリスティックを並列実行。
+            松浦先生の認知モデル（未配置者パネル）で手動調整も可能。
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <button className="btn btn-ghost btn-sm">
+            <Download size={12} /> 過去の実行履歴
+          </button>
         </div>
       </div>
 
-      {/* ── ステップインジケーター ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24, background: 'var(--surface)', borderRadius: 12, padding: '14px 20px', boxShadow: 'var(--shadow)' }}>
+      {/* Stepper */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
         {[
-          { key: 'setup',   label: '① 条件設定', desc: '児童・時間・優先度' },
-          { key: 'result',  label: '② ルート確認', desc: '最適化結果・Google Maps' },
-          { key: 'driving', label: '③ 運行中',    desc: 'リアルタイム進捗・再調整' },
+          { n: 1, label: '条件設定', desc: '児童・制約・除外' },
+          { n: 2, label: 'シミュレーション', desc: 'Pattern A / B 比較' },
+          { n: 3, label: '確定・ナビ連携', desc: '採用 & 配布' },
         ].map((s, i, arr) => {
-          const isActive = step === s.key
-          const isDone = (step === 'result' && i === 0) || (step === 'driving' && i < 2)
+          const active = step === s.n
+          const done = step > s.n
+          const clickable = done || active
           return (
-            <div key={s.key} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isDone ? 'var(--green)' : isActive ? 'var(--accent)' : 'var(--border)',
-                    color: isDone || isActive ? 'white' : 'var(--text-muted)', fontWeight: 700, fontSize: 12, flexShrink: 0,
-                  }}>
-                    {isDone ? <CheckCircle2 size={14} /> : i + 1}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: isActive ? 700 : 500, color: isActive ? 'var(--accent)' : isDone ? 'var(--text)' : 'var(--text-muted)' }}>{s.label}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.desc}</div>
-                  </div>
+            <button
+              key={s.n}
+              onClick={() => clickable && setStep(s.n)}
+              style={{
+                flex: 1, padding: '14px 20px', textAlign: 'left',
+                background: active ? 'var(--surface)' : done ? 'var(--sage-soft)' : 'var(--bg-deep)',
+                border: active ? '1px solid var(--accent)' : done ? '1px solid transparent' : '1px solid var(--line)',
+                borderRadius: 'var(--radius)',
+                cursor: clickable ? 'pointer' : 'default',
+                opacity: clickable ? 1 : 0.55,
+                position: 'relative',
+                display: 'flex', alignItems: 'center', gap: 12,
+                transition: 'all 0.15s',
+              }}
+            >
+              <div style={{
+                width: 30, height: 30, borderRadius: 6,
+                background: done ? 'var(--sage)' : active ? 'var(--accent)' : 'var(--line-strong)',
+                color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14,
+              }}>
+                {done ? <CheckCircle2 size={15} /> : s.n}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, color: active ? 'var(--accent)' : done ? 'var(--sage)' : 'var(--ink)' }}>
+                  {s.label}
                 </div>
+                <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 1 }}>{s.desc}</div>
               </div>
               {i < arr.length - 1 && (
-                <ChevronRight size={16} color={isDone ? 'var(--green)' : 'var(--border)'} style={{ flexShrink: 0, margin: '0 8px' }} />
+                <ChevronRight size={14} color="var(--ink-faint)" style={{ position: 'absolute', right: -12, top: '50%', transform: 'translateY(-50%)', background: 'var(--bg)', padding: 3, borderRadius: '50%', zIndex: 1 }} />
               )}
-            </div>
+            </button>
           )
         })}
       </div>
+    </>
+  )
+}
 
-      {/* ── STEP 1: 条件設定 ── */}
-      {step === 'setup' && (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          {/* 左：基本設定 */}
-          <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: 14 }}>基本設定</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div>
-                  <div style={labelStyle}>日付</div>
-                  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} style={{ width: '100%' }} />
-                </div>
-                <div>
-                  <div style={labelStyle}>車両</div>
-                  <select style={{ width: '100%' }} value={selectedVehicle.id} onChange={e => setSelectedVehicle(vehicles.find(v => v.id === e.target.value))}>
-                    {vehicles.map(v => <option key={v.id} value={v.id}>{v.name}（定員{v.capacity}名）</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div style={labelStyle}>種別</div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {[{ v: 'pickup', l: 'お迎え' }, { v: 'dropoff', l: 'お送り' }].map(opt => (
-                      <button key={opt.v} onClick={() => setRouteType(opt.v)} style={{
-                        flex: 1, padding: '8px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-                        border: `2px solid ${routeType === opt.v ? 'var(--accent)' : 'var(--border)'}`,
-                        background: routeType === opt.v ? 'var(--accent-light)' : 'white',
-                        color: routeType === opt.v ? 'var(--accent)' : 'var(--text-muted)',
-                      }}>{opt.l}</button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card" style={{ background: 'var(--accent-light)', border: '1px solid #bfdbfe' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>📌 設定のヒント</div>
-              <div style={{ fontSize: 12, color: '#1d4ed8', lineHeight: 1.7 }}>
-                • 優先度「最優先」は必ず先に送迎<br />
-                • 時間窓を設定すると制約を考慮して順序を決定<br />
-                • 除外した児童は今日の送迎から外れます
-              </div>
-            </div>
-
-            <div style={{ background: 'var(--surface)', borderRadius: 12, boxShadow: 'var(--shadow)', padding: 16 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>対象：{conditions.filter(c => !c.excluded).length}名 / 全{conditions.length}名</div>
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%', justifyContent: 'center', fontSize: 14, padding: '12px' }}
-                onClick={handleOptimize}
-                disabled={isOptimizing || conditions.filter(c => !c.excluded).length === 0}
-              >
-                {isOptimizing
-                  ? <><span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span> 最適化中...</>
-                  : <><Zap size={15} /> ルートを最適化</>}
-              </button>
-            </div>
+// ─────────────────────────────────────────────
+// STEP 1: Conditions
+// ─────────────────────────────────────────────
+function Step1({
+  date, setDate, direction, setDirection,
+  activeConstraints, toggleConstraint,
+  includeCrossOrg, setIncludeCrossOrg,
+  excludedIds, toggleExclude,
+  transportChildren, calculating, runSimulation,
+}) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 20 }}>
+      {/* Left: main configuration */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Basic */}
+        <div className="panel">
+          <div className="panel-header">
+            <div className="panel-title">基本設定</div>
+            <span className="eyebrow">STEP 1 / 3</span>
           </div>
-
-          {/* 右：児童ごとの条件 */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="card" style={{ padding: 0 }}>
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="card-title">児童別 条件設定</span>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>優先度</span>
-                  {PRIORITY_OPTS.map(p => (
-                    <span key={p.value} style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span>{p.icon}</span>{p.label}
-                    </span>
-                  ))}
-                </div>
+          <div style={{ padding: 20, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+            <Field label="対象日">
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{ width: '100%' }} />
+            </Field>
+            <Field label="送迎方向">
+              <div className="seg" style={{ width: '100%' }}>
+                <button className={direction === 'pickup' ? 'active' : ''} onClick={() => setDirection('pickup')} style={{ flex: 1 }}>迎え</button>
+                <button className={direction === 'dropoff' ? 'active' : ''} onClick={() => setDirection('dropoff')} style={{ flex: 1 }}>送り</button>
               </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {/* ヘッダー行 */}
-                <div style={{ display: 'grid', gridTemplateColumns: '200px 100px 100px 120px 1fr 60px', gap: 8, padding: '8px 18px', background: '#fafbfc', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  <div>児童名</div><div>何時以降</div><div>何時まで</div><div>優先度</div><div>メモ</div><div>除外</div>
-                </div>
-
-                {conditions.map((c, i) => (
-                  <div key={c.id} style={{
-                    display: 'grid', gridTemplateColumns: '200px 100px 100px 120px 1fr 60px',
-                    gap: 8, padding: '10px 18px', alignItems: 'center',
-                    borderBottom: i < conditions.length - 1 ? '1px solid var(--border)' : 'none',
-                    background: c.excluded ? '#fafbfc' : 'white',
-                    opacity: c.excluded ? 0.5 : 1, transition: 'opacity 0.2s',
-                  }}>
-                    {/* 名前 */}
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.facility}</div>
-                    </div>
-
-                    {/* 何時以降 */}
-                    <input
-                      type="time" disabled={c.excluded}
-                      value={c.arriveAfter}
-                      onChange={e => updateCondition(c.id, 'arriveAfter', e.target.value)}
-                      style={{ width: '100%', fontSize: 12 }}
-                    />
-
-                    {/* 何時まで */}
-                    <input
-                      type="time" disabled={c.excluded}
-                      value={c.arriveBy}
-                      onChange={e => updateCondition(c.id, 'arriveBy', e.target.value)}
-                      style={{ width: '100%', fontSize: 12, borderColor: c.arriveBy ? 'var(--accent)' : undefined }}
-                    />
-
-                    {/* 優先度 */}
-                    <select
-                      disabled={c.excluded}
-                      value={c.priority}
-                      onChange={e => updateCondition(c.id, 'priority', Number(e.target.value))}
-                      style={{ width: '100%', fontSize: 12, borderColor: c.priority <= 2 ? PRIORITY_OPTS.find(p => p.value === c.priority)?.color : undefined }}
-                    >
-                      {PRIORITY_OPTS.map(p => (
-                        <option key={p.value} value={p.value}>{p.icon} {p.label}</option>
-                      ))}
-                    </select>
-
-                    {/* メモ */}
-                    <input
-                      type="text" disabled={c.excluded}
-                      placeholder="体調・備考など"
-                      value={c.note}
-                      onChange={e => updateCondition(c.id, 'note', e.target.value)}
-                      style={{ width: '100%', fontSize: 12 }}
-                    />
-
-                    {/* 除外トグル */}
-                    <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <button
-                        onClick={() => updateCondition(c.id, 'excluded', !c.excluded)}
-                        style={{
-                          width: 32, height: 32, borderRadius: 8, cursor: 'pointer',
-                          border: `1px solid ${c.excluded ? 'var(--border)' : '#fecaca'}`,
-                          background: c.excluded ? '#f1f5f9' : '#fee2e2',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          color: c.excluded ? 'var(--text-muted)' : 'var(--red)', transition: 'all 0.15s',
-                        }}
-                        title={c.excluded ? '送迎に含める' : '今日は除外'}
-                      >
-                        {c.excluded ? <Plus size={14} /> : <Minus size={14} />}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            </Field>
+            <Field label="学校カレンダー">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0' }}>
+                <span className="pill pill-sage">登校日</span>
+                <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>→ 学校送迎を自動選択</span>
               </div>
-            </div>
+            </Field>
           </div>
         </div>
-      )}
 
-      {/* ── STEP 2: ルート確認 ── */}
-      {step === 'result' && (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          {/* 左：ルート順序リスト */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* サマリー */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-              {[
-                { label: '送迎人数', value: `${optimizedStops.length}名`, icon: <Users size={16} color="#2e7df7" />, bg: '#e8f1ff' },
-                { label: '推定所要時間', value: '約65分', icon: <Clock size={16} color="#22c55e" />, bg: '#dcfce7' },
-                { label: '走行距離', value: '約14.2km', icon: <Navigation size={16} color="#f59e0b" />, bg: '#fef3c7' },
-                { label: '担当車両', value: selectedVehicle.name.split('（')[0], icon: <Car size={16} color="#8b5cf6" />, bg: '#ede9fe' },
-              ].map(s => (
-                <div key={s.label} style={{ background: 'var(--surface)', borderRadius: 10, boxShadow: 'var(--shadow)', padding: '14px 16px', display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: s.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.icon}</div>
-                  <div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>{s.value}</div>
-                  </div>
-                </div>
-              ))}
+        {/* Constraints */}
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <div className="panel-title">送迎制約</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>必須制約は外せません（補助金要件）</div>
             </div>
-
-            {/* ルート順序 */}
-            <div className="card" style={{ padding: 0 }}>
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="card-title">最適化ルート順序</span>
-                <span className="badge badge-green">最適化済み</span>
-              </div>
-
-              {/* 出発 */}
-              <RouteStopRow
-                icon={<Home size={14} />}
-                label="出発地"
-                name={BASE.name}
-                address={BASE.address}
-                time="13:30"
-                isBase dotColor="#64748b"
-              />
-
-              {optimizedStops.map((stop, i) => {
-                const pOpt = PRIORITY_OPTS.find(p => p.value === stop.priority)
-                const cust = customers.find(c => c.id === stop.id)
-                return (
-                  <div key={stop.id}>
-                    <RouteStopRow
-                      num={i + 1}
-                      name={stop.name}
-                      address={stop.address}
-                      time={stop.estimatedTime}
-                      priority={pOpt}
-                      note={stop.note}
-                      arriveAfter={stop.arriveAfter}
-                      arriveBy={stop.arriveBy}
-                      dotColor="#2e7df7"
-                      isLast={i === optimizedStops.length - 1}
-                    />
-                  </div>
-                )
-              })}
-
-              {/* 帰着 */}
-              <RouteStopRow
-                icon={<Home size={14} />}
-                label="帰着"
-                name={BASE.name}
-                address={BASE.address}
-                time={addMinutes(optimizedStops[optimizedStops.length - 1]?.estimatedTime || '14:00', 15)}
-                isBase dotColor="#64748b"
-                isLast
-              />
-            </div>
+            <Shield size={14} color="var(--ink-muted)" />
           </div>
-
-          {/* 右：地図 + アクション */}
-          <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Google Maps プレビュー */}
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justify: 'space-between', alignItems: 'center' }}>
-                <span className="card-title">Google Maps ナビ</span>
-              </div>
-              {/* 地図プレビュー（iframe embed） */}
-              <div style={{ position: 'relative', height: 220, background: '#e8f4f8', overflow: 'hidden' }}>
-                <iframe
-                  title="map"
-                  width="100%" height="100%"
-                  style={{ border: 'none', opacity: 0.85 }}
-                  loading="lazy"
-                  src={`https://www.google.com/maps/embed/v1/directions?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU3Kuo&origin=${encodeURIComponent(BASE.address)}&destination=${encodeURIComponent(BASE.address)}&waypoints=${optimizedStops.map(s => encodeURIComponent(s.address)).join('|')}&mode=driving&language=ja`}
-                />
-                {/* オーバーレイ（APIキーがないので案内表示） */}
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%)',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-                }}>
-                  <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'white', boxShadow: '0 4px 16px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Map size={24} color="#2e7df7" />
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b', marginBottom: 4 }}>ルートが準備できました</div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>{optimizedStops.length}箇所 経由</div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', padding: '0 16px' }}>
-                    {[BASE.name, ...optimizedStops.slice(0,3).map(s => s.name)].map((name, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.7)', borderRadius: 6, padding: '4px 8px' }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: i === 0 ? '#22c55e' : '#2e7df7', flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                      </div>
-                    ))}
-                    {optimizedStops.length > 3 && (
-                      <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center' }}>他 {optimizedStops.length - 3}箇所...</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div style={{ padding: '12px 16px' }}>
-                <a
-                  href={mapsUrl} target="_blank" rel="noopener noreferrer"
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+            {CONSTRAINTS.map(c => {
+              const on = activeConstraints.includes(c.id)
+              const lock = c.req
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => !lock && toggleConstraint(c.id)}
                   style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    width: '100%', padding: '11px', borderRadius: 8,
-                    background: '#4285f4', color: 'white', textDecoration: 'none',
-                    fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
-                    boxShadow: '0 2px 8px rgba(66,133,244,0.35)',
+                    padding: '12px 14px', borderRadius: 8, textAlign: 'left',
+                    border: on ? `1.5px solid ${lock ? 'var(--accent)' : 'var(--sage)'}` : '1px solid var(--line)',
+                    background: on ? (lock ? 'var(--accent-faint)' : 'var(--sage-soft)') : 'var(--surface)',
+                    cursor: lock ? 'default' : 'pointer',
+                    transition: 'all 0.15s',
                   }}
                 >
-                  <Map size={15} /> Google Maps でナビ開始
-                  <ExternalLink size={12} />
-                </a>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
-                  ブラウザ or スマホのGoogle Mapsアプリで開きます
-                </div>
-              </div>
-            </div>
-
-            {/* 運行開始ボタン */}
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', justifyContent: 'center', padding: '14px', fontSize: 15, borderRadius: 10 }}
-              onClick={startDriving}
-            >
-              <Play size={16} /> 運行を開始する
-            </button>
-
-            <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setStep('setup')}>
-              <RotateCcw size={14} /> 条件を変更する
-            </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <div style={{
+                      width: 14, height: 14, borderRadius: 3,
+                      background: on ? (lock ? 'var(--accent)' : 'var(--sage)') : 'transparent',
+                      border: on ? 'none' : '1.5px solid var(--line-strong)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {on && <CheckCircle2 size={10} color="#fff" strokeWidth={3} />}
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{c.label}</span>
+                    {lock && (
+                      <span className="pill pill-accent" style={{ fontSize: 8, padding: '0 5px', marginLeft: 'auto' }}>MUST</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', paddingLeft: 22 }}>{c.desc}</div>
+                </button>
+              )
+            })}
           </div>
         </div>
-      )}
 
-      {/* ── STEP 3: 運行中 ── */}
-      {step === 'driving' && (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          {/* 左：進捗リスト */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* プログレスバー */}
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontWeight: 700, fontSize: 15 }}>運行進捗</span>
-                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{doneCount} / {totalCount} 名完了</span>
-              </div>
-              <div style={{ height: 8, background: 'var(--border)', borderRadius: 999, overflow: 'hidden', marginBottom: 8 }}>
-                <div style={{ width: `${progress}%`, height: '100%', background: 'var(--green)', borderRadius: 999, transition: 'width 0.5s' }} />
-              </div>
-              <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
-                {[
-                  { label: '完了', count: doneCount, color: 'var(--green)' },
-                  { label: 'スキップ', count: optimizedStops.filter(s => stopStatuses[s.id] === STOP_STATUS.skipped).length, color: 'var(--amber)' },
-                  { label: '残り', count: totalCount - doneCount - optimizedStops.filter(s => stopStatuses[s.id] === STOP_STATUS.skipped).length, color: 'var(--text-muted)' },
-                ].map(s => (
-                  <span key={s.label} style={{ color: s.color, fontWeight: 600 }}>{s.label}: {s.count}名</span>
-                ))}
+        {/* Children list */}
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <div className="panel-title">送迎対象児童</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+                <span className="num" style={{ color: 'var(--ink)', fontWeight: 700 }}>{transportChildren.length}</span> 名が対象
+                （イレギュラー・保護者送迎・契約外を除外）
               </div>
             </div>
-
-            {/* 停車リスト */}
-            <div className="card" style={{ padding: 0 }}>
-              <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span className="card-title">停車リスト</span>
-                {!showReoptConfirm ? (
-                  <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowReoptConfirm(true)}>
-                    <RefreshCw size={13} /> 残りを再最適化
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, color: 'var(--amber)' }}>再最適化しますか？</span>
-                    <button className="btn btn-primary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={handleReoptimize}>実行</button>
-                    <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setShowReoptConfirm(false)}>キャンセル</button>
-                  </div>
-                )}
-              </div>
-
-              {/* 出発地 */}
-              <DrivingStopRow name={BASE.name} time="13:30" status="done" isBase />
-
-              {optimizedStops.map((stop, i) => {
-                const status = stopStatuses[stop.id] || STOP_STATUS.waiting
-                const isCurrent = i === currentStopIdx && status === STOP_STATUS.waiting
-                return (
-                  <DrivingStopRow
-                    key={stop.id}
-                    num={i + 1}
-                    name={stop.name}
-                    address={stop.address}
-                    time={stop.estimatedTime}
-                    status={status}
-                    isCurrent={isCurrent}
-                    note={stop.note}
-                    priority={PRIORITY_OPTS.find(p => p.value === stop.priority)}
-                    onDone={() => markDone(stop.id)}
-                    onSkip={() => markSkipped(stop.id)}
-                  />
-                )
-              })}
-
-              <DrivingStopRow
-                name={BASE.name} time="帰着予定"
-                status={doneCount === totalCount ? 'done' : 'waiting'}
-                isBase isLast
-              />
-            </div>
+            <button className="btn btn-ghost btn-sm"><Eye size={11} /> 除外一覧</button>
           </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}></th>
+                  <th>児童</th>
+                  <th>所属</th>
+                  <th>場所</th>
+                  <th>学校時刻</th>
+                  <th>特記</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transportChildren.map(c => {
+                  const fac = FACILITY_BY_ID[c.facility]
+                  const loc = LOC_BY_ID[c.pickupLoc] || LOC_BY_ID[c.school]
+                  const excluded = excludedIds.includes(c.id)
+                  return (
+                    <tr key={c.id} className="clickable" style={{ opacity: excluded ? 0.5 : 1 }}>
+                      <td>
+                        <input type="checkbox" checked={!excluded} onChange={() => toggleExclude(c.id)} />
+                      </td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                        <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>{c.grade} · {c.gender}</div>
+                      </td>
+                      <td>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 1.5, background: fac?.color }} />
+                          <span style={{ fontSize: 11 }}>{fac?.short}</span>
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 11 }}>{loc?.name || '—'}</td>
+                      <td className="num" style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{loc?.time || '—'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                          {c.tag && <span className="pill pill-accent" style={{ fontSize: 9 }}>{c.tag}</span>}
+                          {c.safetyReq && <span className="pill pill-amber" style={{ fontSize: 9 }}>要注意</span>}
+                          {c.ngWith?.length > 0 && <span className="pill pill-danger" style={{ fontSize: 9 }}>同乗NG</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
-          {/* 右：マップ + アクション */}
-          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                <div className="card-title">ナビゲーション</div>
-              </div>
-              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  padding: '12px', borderRadius: 8, background: '#4285f4', color: 'white',
-                  textDecoration: 'none', fontWeight: 700, fontSize: 13, fontFamily: 'inherit',
-                }}>
-                  <Navigation size={15} /> Google Maps を開く <ExternalLink size={12} />
-                </a>
-                <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 12px' }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>次の目的地</div>
-                  {optimizedStops[currentStopIdx] ? (
-                    <>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{optimizedStops[currentStopIdx]?.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{optimizedStops[currentStopIdx]?.address}</div>
-                      <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600, marginTop: 4 }}>
-                        到着予定: {optimizedStops[currentStopIdx]?.estimatedTime}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--green)' }}>✓ 全停車地完了</div>
-                  )}
-                </div>
-              </div>
+      {/* Right: summary + action */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 20, alignSelf: 'flex-start' }}>
+        <div className="panel" style={{ background: 'var(--ink)', color: '#fff', borderColor: 'var(--ink)' }}>
+          <div style={{ padding: 20 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', marginBottom: 14 }}>
+              シミュレーションサマリー
             </div>
-
-            {/* 緊急再ルーティング */}
-            <div className="card" style={{ background: '#fff7ed', border: '1px solid #fed7aa', padding: 16 }}>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                <AlertTriangle size={15} color="#f59e0b" style={{ flexShrink: 0, marginTop: 1 }} />
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#92400e' }}>途中変更の操作</div>
-              </div>
-              <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.7, marginBottom: 12 }}>
-                「スキップ」すると残りの児童を除いた順序で再最適化できます。
-                緊急の欠席は「残りを再最適化」で対応できます。
-              </div>
-              <button
-                className="btn"
-                style={{ width: '100%', justifyContent: 'center', background: '#f59e0b', color: 'white', fontSize: 12 }}
-                onClick={() => setShowReoptConfirm(true)}
-              >
-                <RefreshCw size={13} /> 残りを今すぐ再最適化
-              </button>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
+              <Stat label="送迎対象" value={transportChildren.length} suf="名" />
+              <Stat label="利用可能車両" value={VEHICLES.length} suf="台" />
+              <Stat label="定員合計" value={VEHICLES.reduce((s, v) => s + v.capacity, 0)} suf="名" />
+              <Stat label="適用制約" value={activeConstraints.length} suf={`/${CONSTRAINTS.length}`} />
             </div>
-
-            {doneCount === totalCount && (
-              <div className="card" style={{ background: 'var(--green-light)', border: '1px solid #86efac', textAlign: 'center', padding: 20 }}>
-                <CheckCircle2 size={32} color="var(--green)" style={{ margin: '0 auto 8px' }} />
-                <div style={{ fontWeight: 700, fontSize: 16, color: '#15803d' }}>送迎完了！</div>
-                <div style={{ fontSize: 12, color: '#166534', marginTop: 4 }}>お疲れ様でした。全員の送迎が完了しました。</div>
+            <button
+              onClick={runSimulation}
+              disabled={calculating}
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '13px', fontSize: 14, background: calculating ? 'var(--ink-muted)' : 'var(--accent)', justifyContent: 'center' }}
+            >
+              {calculating ? (
+                <><RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> 計算中...</>
+              ) : (
+                <><Zap size={15} /> 最適化を実行</>
+              )}
+            </button>
+            {calculating && (
+              <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(255,255,255,0.65)', fontFamily: 'var(--font-mono)', lineHeight: 1.7 }}>
+                <div>→ Pattern A: OR-Tools VRP ソルバー</div>
+                <div>→ Pattern B: K-Means + 最近傍法</div>
+                <div>→ 制約充足チェック中...</div>
               </div>
             )}
           </div>
         </div>
-      )}
 
-      <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-      `}</style>
+        <div className="surface" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <FlaskConical size={13} color="var(--accent)" />
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              比較実行
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.65 }}>
+            Pattern A (完全自動) と Pattern B (ヒューリスティック + 手動調整) を同時に実行。採用前に両案を見比べて判断できます。
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-// ── サブコンポーネント ────────────────────────
+// ─────────────────────────────────────────────
+// STEP 2: Simulation Comparison
+// ─────────────────────────────────────────────
+function Step2({ date, direction, adoptPattern, selectedVehicle, setSelectedVehicle, highlightChildId, setHighlightChildId }) {
+  const [activePattern, setActivePattern] = useState('A')
+  const [showUnassigned, setShowUnassigned] = useState(false)
 
-const labelStyle = { fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5 }
+  const current = activePattern === 'A' ? SIMULATION_A : SIMULATION_B
 
-function RouteStopRow({ num, name, address, time, priority, note, arriveAfter, arriveBy, isBase, isLast, dotColor, icon, label }) {
   return (
-    <div style={{ display: 'flex', gap: 0, borderBottom: isLast ? 'none' : '1px solid var(--border)' }}>
-      {/* タイムライン */}
-      <div style={{ width: 48, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', flexShrink: 0 }}>
-        <div style={{ width: 12, height: 12, borderRadius: '50%', background: dotColor, border: '2px solid white', boxShadow: `0 0 0 2px ${dotColor}`, flexShrink: 0, zIndex: 1 }} />
-        {!isLast && <div style={{ width: 2, flex: 1, background: '#e2e8f0', marginTop: 4 }} />}
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 20 }}>
+      {/* Left: Map + route details */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Pattern switcher */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <PatternCard
+            label="Pattern A"
+            algo="OR-Tools VRP"
+            sim={SIMULATION_A}
+            active={activePattern === 'A'}
+            onClick={() => setActivePattern('A')}
+            recommended={true}
+          />
+          <PatternCard
+            label="Pattern B"
+            algo="K-Means + 近傍法"
+            sim={SIMULATION_B}
+            active={activePattern === 'B'}
+            onClick={() => setActivePattern('B')}
+          />
+        </div>
+
+        {/* Map */}
+        <div className="panel" style={{ padding: 0 }}>
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="panel-title">ルート地図</div>
+              <div className="seg" style={{ fontSize: 10 }}>
+                <button className="active">全車両</button>
+                <button>車両別</button>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-muted)', display: 'flex', gap: 12 }}>
+              <span><span className="num">{current.routes.length}</span> 便</span>
+              <span>総距離 <span className="num">{current.totalDistance}km</span></span>
+              <span>総所要 <span className="num">{current.totalTime}分</span></span>
+            </div>
+          </div>
+          <div style={{ height: 440 }}>
+            <KasugaiMap
+              routes={current.routes}
+              selectedVehicle={selectedVehicle}
+              onSelectVehicle={setSelectedVehicle}
+              highlightChildren={highlightChildId ? [highlightChildId] : []}
+            />
+          </div>
+        </div>
+
+        {/* Route details per vehicle */}
+        <div className="panel">
+          <div className="panel-header">
+            <div className="panel-title">車両別ルート詳細</div>
+            {selectedVehicle && (
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedVehicle(null)}>
+                <X size={11} /> 選択解除
+              </button>
+            )}
+          </div>
+          <div>
+            {current.routes.map(r => (
+              <VehicleRouteRow
+                key={r.vehicle}
+                route={r}
+                selected={selectedVehicle === r.vehicle}
+                onSelect={() => setSelectedVehicle(r.vehicle === selectedVehicle ? null : r.vehicle)}
+                onHighlightChild={setHighlightChildId}
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* コンテンツ */}
-      <div style={{ flex: 1, padding: '10px 16px 10px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 3 }}>
-          {isBase ? (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>{label || ''} {name}</span>
-          ) : (
-            <>
-              <span style={{ background: '#f1f5f9', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, flexShrink: 0, marginTop: 1 }}>#{num}</span>
-              <span style={{ fontWeight: 700, fontSize: 13 }}>{name}</span>
-              {priority && (
-                <span title={priority.label} style={{ fontSize: 14, flexShrink: 0 }}>{priority.icon}</span>
-              )}
-            </>
-          )}
-          <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13, color: 'var(--accent)', whiteSpace: 'nowrap', flexShrink: 0 }}>{time}</span>
+      {/* Right: Unassigned + Adopt */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 20, alignSelf: 'flex-start' }}>
+        <div className="panel">
+          <div className="panel-header">
+            <div className="panel-title">未配置者パネル</div>
+            <span className="eyebrow" style={{ fontSize: 9 }}>松浦モデル</span>
+          </div>
+          <UnassignedPanel
+            unassignedIds={current.unassignedChildIds || []}
+            onSelectChild={setHighlightChildId}
+            selectedChildId={highlightChildId}
+          />
         </div>
-        {address && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>{address}</div>}
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {arriveAfter && <span style={{ fontSize: 11, background: '#e8f1ff', color: 'var(--accent)', borderRadius: 4, padding: '1px 6px' }}>{arriveAfter}以降</span>}
-          {arriveBy   && <span style={{ fontSize: 11, background: '#fef3c7', color: '#b45309', borderRadius: 4, padding: '1px 6px' }}>{arriveBy}まで</span>}
-          {note && <span style={{ fontSize: 11, color: '#64748b', background: '#f8fafc', borderRadius: 4, padding: '1px 6px' }}>📝 {note}</span>}
+
+        <div className="surface" style={{ padding: 16 }}>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>制約の充足状況</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {Object.entries(current.constraints).map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                {v ? <CheckCircle2 size={11} color="var(--sage)" /> : <X size={11} color="var(--amber)" />}
+                <span style={{ color: v ? 'var(--ink)' : 'var(--amber)' }}>
+                  {constraintLabel(k)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
+
+        <button
+          onClick={() => adoptPattern(activePattern)}
+          className="btn btn-primary"
+          style={{ width: '100%', padding: '12px', justifyContent: 'center', fontSize: 14 }}
+        >
+          Pattern {activePattern} を採用する <ChevronRight size={15} />
+        </button>
       </div>
     </div>
   )
 }
 
-function DrivingStopRow({ num, name, address, time, status, isCurrent, isBase, isLast, note, priority, onDone, onSkip }) {
-  const statusConfig = {
-    done:       { icon: <CheckCircle2 size={18} color="var(--green)" />,  bg: '#dcfce7', border: '#86efac', label: '完了' },
-    skipped:    { icon: <XCircle      size={18} color="var(--amber)" />,  bg: '#fef3c7', border: '#fcd34d', label: 'スキップ' },
-    inProgress: { icon: <Circle       size={18} color="var(--accent)" />, bg: '#e8f1ff', border: '#93c5fd', label: '移動中' },
-    waiting:    { icon: <Circle       size={18} color="#cbd5e1" />,        bg: 'white',   border: 'transparent', label: '' },
+function constraintLabel(key) {
+  const m = {
+    timeWindow: '時間枠制約', capacity: '車両定員', ng: '同乗NG', gender: '性別配慮', crossFacility: '施設横断',
   }
-  const sc = statusConfig[status] || statusConfig.waiting
+  return m[key] || key
+}
+
+function PatternCard({ label, algo, sim, active, onClick, recommended }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '16px 18px', textAlign: 'left',
+        background: active ? 'var(--surface)' : 'var(--bg-deep)',
+        border: active ? '1.5px solid var(--accent)' : '1px solid var(--line)',
+        borderRadius: 'var(--radius)',
+        cursor: 'pointer',
+        transition: 'all 0.2s',
+        position: 'relative',
+      }}
+    >
+      {recommended && (
+        <span style={{
+          position: 'absolute', top: 10, right: 10,
+          background: 'var(--sage)', color: '#fff',
+          fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+          padding: '2px 7px', borderRadius: 3, textTransform: 'uppercase',
+        }}>推奨</span>
+      )}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+        <span className="display" style={{ fontSize: 20, color: active ? 'var(--accent)' : 'var(--ink)' }}>{label}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-muted)' }}>{algo}</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 12 }}>
+        <MiniStat label="所要" value={sim.totalTime} suf="分" />
+        <MiniStat label="距離" value={sim.totalDistance} suf="km" />
+        <MiniStat label="未配置" value={sim.unassigned} suf="名" warn={sim.unassigned > 0} />
+      </div>
+    </button>
+  )
+}
+
+function MiniStat({ label, value, suf, warn }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: 'var(--ink-muted)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{label}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: warn ? 'var(--amber)' : 'var(--ink)' }}>
+        <span className="num">{value}</span>
+        <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 2, color: 'var(--ink-muted)' }}>{suf}</span>
+      </div>
+    </div>
+  )
+}
+
+function VehicleRouteRow({ route, selected, onSelect, onHighlightChild }) {
+  const v = VEHICLE_BY_ID[route.vehicle]
+  const childStops = route.stops.filter(s => s.childId)
 
   return (
-    <div style={{
-      display: 'flex', gap: 12, padding: '12px 18px', alignItems: 'flex-start',
-      borderBottom: isLast ? 'none' : '1px solid var(--border)',
-      background: isCurrent ? '#eff6ff' : sc.bg,
-      borderLeft: isCurrent ? '3px solid var(--accent)' : '3px solid transparent',
-      transition: 'background 0.2s',
-    }}>
-      <div style={{ marginTop: 2 }}>{sc.icon}</div>
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          {!isBase && num && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: '#f1f5f9', padding: '1px 5px', borderRadius: 3 }}>#{num}</span>}
-          <span style={{ fontWeight: 600, fontSize: 13 }}>{name}</span>
-          {isCurrent && <span style={{ fontSize: 10, background: 'var(--accent)', color: 'white', borderRadius: 999, padding: '1px 7px', animation: 'pulse 1.5s infinite' }}>現在地</span>}
-          {status === 'done' && <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 600 }}>✓ 完了</span>}
-          {status === 'skipped' && <span style={{ fontSize: 11, color: 'var(--amber)', fontWeight: 600 }}>スキップ</span>}
-          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{time}</span>
+    <div style={{ borderBottom: '1px solid var(--line-soft)' }}>
+      <div
+        onClick={onSelect}
+        style={{
+          padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 12,
+          cursor: 'pointer', background: selected ? 'var(--bg)' : 'transparent',
+          borderLeft: selected ? `3px solid ${route.color}` : '3px solid transparent',
+        }}
+        onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--surface-soft)' }}
+        onMouseLeave={e => { if (!selected) e.currentTarget.style.background = 'transparent' }}
+      >
+        <span style={{ width: 4, height: 30, borderRadius: 2, background: route.color, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+            {v?.name}
+            <span style={{ fontSize: 10, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>{v?.plate}</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+            {v?.driver} · 定員{v?.capacity} · {childStops.length}名乗車
+          </div>
         </div>
-        {address && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{address}</div>}
-        {note && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>📝 {note}</div>}
+        <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)', textAlign: 'right' }}>
+          <div>{route.stops[0]?.time} → {route.stops[route.stops.length - 1]?.time}</div>
+          <div style={{ color: 'var(--ink-muted)', fontSize: 10 }}>stops {route.stops.length}</div>
+        </div>
+        <ChevronRight size={14} color="var(--ink-muted)" style={{ transform: selected ? 'rotate(90deg)' : '', transition: 'transform 0.2s' }} />
       </div>
 
-      {/* アクションボタン（待機中のみ） */}
-      {!isBase && status === STOP_STATUS.waiting && (
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <button
-            onClick={onDone}
-            style={{ padding: '5px 12px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'var(--green)', color: 'white', fontSize: 12, fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 4 }}
-          >
-            <CheckCircle2 size={12} /> 完了
-          </button>
-          <button
-            onClick={onSkip}
-            style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid var(--border)', cursor: 'pointer', background: 'white', color: 'var(--text-muted)', fontSize: 12, fontFamily: 'inherit' }}
-          >
-            スキップ
-          </button>
+      {selected && (
+        <div style={{ padding: '6px 20px 14px 40px', background: 'var(--surface-soft)' }}>
+          {route.stops.map((s, i) => {
+            const child = s.childId ? CHILD_BY_ID[s.childId] : null
+            const isBase = s.kind === 'depart' || s.kind === 'arrive'
+            return (
+              <div
+                key={i}
+                onMouseEnter={() => s.childId && onHighlightChild(s.childId)}
+                onMouseLeave={() => onHighlightChild(null)}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: 12 }}
+              >
+                <div style={{ width: 20, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--ink-muted)' }}>
+                  {isBase ? '●' : i}
+                </div>
+                <span className="num" style={{ fontSize: 11, color: route.color, fontWeight: 600, width: 40 }}>{s.time}</span>
+                <span style={{ flex: 1, fontWeight: isBase ? 400 : 600, color: isBase ? 'var(--ink-muted)' : 'var(--ink)' }}>
+                  {isBase ? (s.kind === 'depart' ? '出発 ' : '帰着 ') + BASE.name : child?.name}
+                </span>
+                {child && (
+                  <span style={{ fontSize: 10, color: 'var(--ink-muted)' }}>
+                    {LOC_BY_ID[s.schoolId]?.name || child.address}
+                  </span>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// STEP 3: Adopted / Navigate
+// ─────────────────────────────────────────────
+function Step3({ pattern, date, direction }) {
+  const sim = pattern === 'A' ? SIMULATION_A : SIMULATION_B
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="panel" style={{ background: 'var(--sage-soft)', borderColor: 'var(--sage)' }}>
+          <div style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--sage)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CheckCircle2 size={22} color="#fff" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="display" style={{ fontSize: 16, color: 'var(--sage)' }}>Pattern {pattern} を採用しました</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 3 }}>
+                {date} の{direction === 'pickup' ? '迎え' : '送り'}便に反映。各ドライバーのスマホへ通知送信済み。
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm"><Download size={12} /> PDF</button>
+              <button className="btn btn-ghost btn-sm"><Download size={12} /> CSV</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ padding: 0 }}>
+          <div className="panel-header">
+            <div className="panel-title">ドライバー配布用カード</div>
+            <button className="btn btn-sage btn-sm"><Map size={11} /> Google Maps で全便開く</button>
+          </div>
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+            {sim.routes.map(r => {
+              const v = VEHICLE_BY_ID[r.vehicle]
+              const stops = r.stops.filter(s => s.childId)
+              return (
+                <div key={r.vehicle} style={{ border: `1.5px solid ${r.color}`, borderRadius: 10, overflow: 'hidden', background: '#fff' }}>
+                  <div style={{ padding: '10px 14px', background: r.color, color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{v?.name}</div>
+                    <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', opacity: 0.85 }}>{v?.plate}</div>
+                  </div>
+                  <div style={{ padding: '10px 14px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 6 }}>
+                      {v?.driver} · {stops.length}名
+                    </div>
+                    {stops.map((s, i) => {
+                      const child = CHILD_BY_ID[s.childId]
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 8, padding: '4px 0', fontSize: 12 }}>
+                          <span style={{ color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', width: 36, fontSize: 11 }}>{s.time}</span>
+                          <span style={{ fontWeight: 600 }}>{child?.name}</span>
+                          <span style={{ marginLeft: 'auto', color: 'var(--ink-muted)', fontSize: 10 }}>{LOC_BY_ID[s.schoolId]?.name?.replace('小学校', '小').replace('中学校', '中') || ''}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div style={{ padding: '8px 14px', background: 'var(--surface-soft)', borderTop: '1px solid var(--line)' }}>
+                    <a
+                      href={googleMapsUrl(r)}
+                      target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <Navigation size={11} /> Google Mapsでナビ開始
+                    </a>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="surface" style={{ padding: 18 }}>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>次のアクション</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Play size={12} /> 運行開始モード</button>
+            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Users size={12} /> 保護者通知を送信</button>
+            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Download size={12} /> 配送記録をHUGへ</button>
+          </div>
+        </div>
+
+        <div className="surface" style={{ padding: 18 }}>
+          <div className="eyebrow" style={{ marginBottom: 8 }}>実行サマリー</div>
+          <dl style={{ display: 'grid', gridTemplateColumns: '1fr auto', rowGap: 8, columnGap: 16, fontSize: 12 }}>
+            <dt style={{ color: 'var(--ink-muted)' }}>使用アルゴリズム</dt>
+            <dd style={{ fontWeight: 600 }}>{sim.label}</dd>
+            <dt style={{ color: 'var(--ink-muted)' }}>便数</dt>
+            <dd className="num">{sim.routes.length}</dd>
+            <dt style={{ color: 'var(--ink-muted)' }}>総距離</dt>
+            <dd className="num">{sim.totalDistance}km</dd>
+            <dt style={{ color: 'var(--ink-muted)' }}>総所要</dt>
+            <dd className="num">{sim.totalTime}分</dd>
+            <dt style={{ color: 'var(--ink-muted)' }}>未配置</dt>
+            <dd className="num" style={{ color: sim.unassigned > 0 ? 'var(--amber)' : 'var(--sage)' }}>{sim.unassigned}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function googleMapsUrl(route) {
+  const points = route.stops.map(s => {
+    if (s.x != null) return `${s.x},${s.y}`
+    const loc = LOC_BY_ID[s.schoolId]
+    return loc?.name || ''
+  }).filter(Boolean)
+  if (points.length < 2) return '#'
+  const origin = encodeURIComponent(points[0])
+  const dest = encodeURIComponent(points[points.length - 1])
+  const waypoints = points.slice(1, -1).map(encodeURIComponent).join('|')
+  return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${waypoints ? `&waypoints=${waypoints}` : ''}&travelmode=driving`
+}
+
+// ─── utilities ───
+function Field({ label, children }) {
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 5 }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
+function Stat({ label, value, suf }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+        <span className="display num" style={{ fontSize: 24, color: '#fff' }}>{value}</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{suf}</span>
+      </div>
     </div>
   )
 }
