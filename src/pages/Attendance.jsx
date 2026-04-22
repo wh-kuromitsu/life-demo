@@ -22,7 +22,6 @@ export default function Attendance({ facilityId }) {
         <div>
           <div className="page-eyebrow">Attendance</div>
           <h1 className="page-title">入退室記録</h1>
-          <p className="page-sub">入室・退室時刻の打刻、月間出席状況、欠席連絡の管理。保護者通知と連動。</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <div className="seg">

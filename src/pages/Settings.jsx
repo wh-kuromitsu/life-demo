@@ -20,7 +20,6 @@ export default function Settings() {
         <div>
           <div className="page-eyebrow">Settings</div>
           <h1 className="page-title">設定</h1>
-          <p className="page-sub">法人情報、車両、通知、アカウント、セキュリティの設定を管理します。</p>
         </div>
       </div>
 

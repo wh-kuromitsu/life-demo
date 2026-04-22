@@ -410,6 +410,17 @@ export const CHILDREN = [
   },
 ]
 
+import { xyToLatLng } from './schoolsData'
+
+// homeX/homeY から自動で lat/lng を付与（実運用では児童の自宅住所からジオコーディング）
+CHILDREN.forEach(c => {
+  const ll = xyToLatLng(c.homeX, c.homeY)
+  if (ll) {
+    c.homeLat = ll.lat
+    c.homeLng = ll.lng
+  }
+})
+
 export const CHILD_BY_ID = Object.fromEntries(CHILDREN.map(c => [c.id, c]))
 
 // タグ一覧（フィルタリング用）

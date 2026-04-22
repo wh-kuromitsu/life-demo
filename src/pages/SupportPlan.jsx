@@ -31,9 +31,6 @@ export default function SupportPlan({ facilityId }) {
         <div>
           <div className="page-eyebrow">Individual Support Plan</div>
           <h1 className="page-title">個別支援計画</h1>
-          <p className="page-sub">
-            アセスメント→ニーズ→目標→支援→モニタリング→承認の6ステップ。5領域別の目標設定と保護者同意フロー。
-          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm"><Download size={12} /> PDF出力</button>

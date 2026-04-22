@@ -27,9 +27,6 @@ export default function Dashboard({ facilityId, setPage }) {
         <div>
           <div className="page-eyebrow">Today · {new Date().toLocaleDateString('ja-JP', { weekday: 'long' })}</div>
           <h1 className="page-title">ダッシュボード</h1>
-          <p className="page-sub">
-            本日の送迎・利用者・HUG連携状況を俯瞰。詳細は各画面へ移動してください。
-          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm">週次レポート</button>

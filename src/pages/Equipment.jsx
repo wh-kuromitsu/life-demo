@@ -54,10 +54,6 @@ export default function Equipment({ facilityId }) {
         <div>
           <div className="page-eyebrow">Equipment & Teaching Materials</div>
           <h1 className="page-title">備品・教具</h1>
-          <p className="page-sub">
-            5領域別の教具・備品を管理。施設間の貸出・返却、使用中の教具が一目でわかる。
-            発達段階と年齢帯に応じた選定が可能。
-          </p>
         </div>
         <button className="btn btn-primary"><Plus size={12} /> 教具を登録</button>
       </div>

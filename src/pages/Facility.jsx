@@ -20,10 +20,6 @@ export default function Facility({ setPage }) {
         <div>
           <div className="page-eyebrow">Facility Management</div>
           <h1 className="page-title">施設管理</h1>
-          <p className="page-sub">
-            2法人13事業所の基本情報・定員・サービス種別・特化テーマを一元管理。
-            補助金対象事業所（新事業進出補助金）は★マーク。
-          </p>
         </div>
         <button className="btn btn-primary">新規施設を追加</button>
       </div>

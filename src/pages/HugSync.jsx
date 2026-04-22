@@ -17,10 +17,6 @@ export default function HugSync() {
         <div>
           <div className="page-eyebrow">HUG Integration</div>
           <h1 className="page-title">HUG連携</h1>
-          <p className="page-sub">
-            株式会社ネットアーツ「HUG」との連携ステータス、取込差分、同期ログを管理。
-            API非公開のためCSV/RPA経由（松岡様作）で自動同期。
-          </p>
         </div>
         <button className="btn btn-primary" onClick={doSync} disabled={syncing}>
           {syncing ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
@@ -92,17 +88,6 @@ export default function HugSync() {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Notice */}
-      <div className="surface" style={{ marginTop: 16, padding: 16, background: 'var(--accent-faint)', borderColor: 'var(--accent-soft)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <AlertTriangle size={14} color="var(--accent)" style={{ flexShrink: 0, marginTop: 2 }} />
-          <div style={{ fontSize: 12, color: 'var(--ink)', lineHeight: 1.65 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>HUGはAPI非公開のため、CSVエクスポート／RPA（松岡様作）経由で連携しています</div>
-            補助金対象機能の開発ではこの連携ロジックを引き継ぎ、UI上で差分を可視化・ワンクリック反映できるようにします。
           </div>
         </div>
       </div>

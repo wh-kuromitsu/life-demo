@@ -32,10 +32,6 @@ export default function Children({ facilityId }) {
         <div>
           <div className="page-eyebrow">Children Management</div>
           <h1 className="page-title">児童管理</h1>
-          <p className="page-sub">
-            利用児童の基本情報・障害種別・送迎配慮・保護者・受給者証を一元管理。
-            実運用の特殊ケース（翔陽連携／祖父母宅送迎／時間指定／同乗NG／医療的ケア）をタグで識別。
-          </p>
         </div>
         <button className="btn btn-primary"><Plus size={13} /> 新規登録</button>
       </div>

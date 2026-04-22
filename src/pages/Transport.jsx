@@ -21,9 +21,6 @@ export default function Transport({ setPage }) {
         <div>
           <div className="page-eyebrow">Transport Operations</div>
           <h1 className="page-title">送迎管理</h1>
-          <p className="page-sub">
-            便制（1便/2便）カレンダー、配車確定履歴、ドライバー配布、HUG貼付反映までを1画面で。
-          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm"><Download size={12} /> 送迎表PDF</button>
