@@ -216,7 +216,6 @@ function SecuritySettings() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <SCard title="セキュリティ設定">
         {[
-          { l: '二要素認証（2FA）', d: 'ログイン時にSMSコードで本人確認', v: twoFactor, set: setTwoFactor },
           { l: '自動ログアウト', d: '30分操作がない場合は自動でログアウト', v: autoLogout, set: setAutoLogout },
         ].map((i, idx) => (
           <div key={i.l} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0', borderBottom: idx === 0 ? '1px solid var(--line-soft)' : 'none' }}>
