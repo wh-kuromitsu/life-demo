@@ -70,35 +70,6 @@ export default function Header({ facilityId }) {
 
       {/* Center search */}
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'var(--bg)',
-          border: '1.5px solid transparent',
-          borderRadius: 999,
-          padding: '7px 16px',
-          minWidth: 340, maxWidth: 440, width: '100%',
-          transition: 'all 0.15s',
-        }}
-          onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--surface)' }}
-          onBlur={e => { e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.background = 'var(--bg)' }}
-        >
-          <Search size={13} color="var(--ink-muted)" />
-          <input
-            placeholder="児童・学校・送迎・HUGを検索"
-            style={{
-              flex: 1, border: 'none', padding: 0,
-              background: 'transparent', fontSize: 12.5,
-              fontWeight: 500,
-            }}
-          />
-          <span style={{
-            display: 'flex', alignItems: 'center', gap: 2,
-            fontSize: 10, color: 'var(--ink-muted)',
-            fontFamily: 'var(--font-mono)', fontWeight: 600,
-          }}>
-            <Command size={10} /> K
-          </span>
-        </div>
       </div>
 
       {/* Right actions */}
