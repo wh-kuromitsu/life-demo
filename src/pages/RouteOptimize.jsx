@@ -424,12 +424,6 @@ function Step1({
                 <button className={direction === 'dropoff' ? 'active' : ''} onClick={() => setDirection('dropoff')} style={{ flex: 1 }}>送り</button>
               </div>
             </Field>
-            <Field label="学校カレンダー">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0' }}>
-                <span className="pill pill-sage">登校日</span>
-                <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>→ 学校送迎を自動選択</span>
-              </div>
-            </Field>
           </div>
         </div>
 
@@ -658,18 +652,6 @@ function Step1({
               </span>
               {' '}と同じ曜日の過去の組み方を起点にできます
             </div>
-          </div>
-        </div>
-
-        <div className="surface" style={{ padding: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-            <Info size={13} color="var(--accent)" />
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-              AI ＋ 人の協調設計
-            </div>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.65 }}>
-            AIは叩き台を提示します。次のステップで<b>配車組表を直接ドラッグ&ドロップ</b>で調整できます。
           </div>
         </div>
       </div>
