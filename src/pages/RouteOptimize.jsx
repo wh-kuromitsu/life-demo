@@ -15,19 +15,24 @@
 //    現場が臨機応変に手組みで調整する」
 //   松浦先生のVBA操作の『身体知』を活かせるUI。
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   Zap, Play, MapPin, Clock, AlertTriangle, Shield, Users, Car,
   RefreshCw, ChevronRight, CheckCircle2, X, Download, Map, Navigation,
   Sliders, FlaskConical, Route, Eye, Grid3x3, MousePointerClick,
   Undo2, Redo2, Save, Plus, Minus, Wand2, UserCheck, Compass,
   ArrowLeftRight, Trash2, AlertCircle, Info, BarChart3, GripVertical,
+  History, Calendar, CalendarClock, Copy,
 } from 'lucide-react'
 import KasugaiMap from '../components/KasugaiMap'
 import UnassignedPanel from '../components/UnassignedPanel'
 import { CHILDREN, CHILD_BY_ID } from '../data/childrenData'
 import { VEHICLES, VEHICLE_BY_ID } from '../data/vehiclesData'
-import { SIMULATION_A, SIMULATION_B, AI_ASSIGNMENT_A, AI_ASSIGNMENT_B, REGIONS, TIME_BANDS, classifyRegion, classifyTimeBand, BASE } from '../data/routesData'
+import {
+  SIMULATION_A, SIMULATION_B, AI_ASSIGNMENT_A, AI_ASSIGNMENT_B,
+  REGIONS, TIME_BANDS, classifyRegion, classifyTimeBand, BASE,
+  PAST_ASSIGNMENTS, findPastAssignmentsBy, getDayOfWeek, DOW_LABELS,
+} from '../data/routesData'
 import { FACILITY_BY_ID } from '../data/facilitiesData'
 import { LOC_BY_ID } from '../data/schoolsData'
 
@@ -64,6 +69,10 @@ export default function RouteOptimize({ facilityId, setPage }) {
   const [draggedChild, setDraggedChild] = useState(null)
   const [view, setView] = useState('matrix')  // 'matrix' | 'map' | 'split'
 
+  // 過去送迎組参照モーダル
+  const [pastModalOpen, setPastModalOpen] = useState(false)
+  const [appliedSource, setAppliedSource] = useState(null)   // 'ai-A' | 'ai-B' | 'past:<id>'
+
   const transportChildren = useMemo(() =>
     CHILDREN.filter(c =>
       c.transport && c.status === 'active' &&
@@ -86,8 +95,48 @@ export default function RouteOptimize({ facilityId, setPage }) {
     const initialAssign = JSON.parse(JSON.stringify(src))
     setSelectedPattern(pat)
     setAssignments(initialAssign)
+    setAppliedSource(`ai-${pat}`)
     setHistory([initialAssign])
     setHistoryIndex(0)
+    setStep(3)
+  }
+
+  // ─── 過去送迎組を初期案として採用 ───
+  // AIを回さず、過去の同一曜日の確定済み送迎組をそのまま Step 3 の起点にする。
+  // 現在の「送迎対象から除外」リストも尊重し、除外児童は自動的に外す。
+  const adoptPast = (pastId) => {
+    const past = PAST_ASSIGNMENTS.find(p => p.id === pastId)
+    if (!past) return
+    // 過去データをディープコピーし、内部形式へ整形
+    const initial = JSON.parse(JSON.stringify({
+      id: `from_past_${past.id}`,
+      label: `過去参照 ${past.label}`,
+      algo: '過去の同一曜日送迎組を複製',
+      totalTime: past.stats?.totalTime ?? 0,
+      totalDistance: past.stats?.totalDistance ?? 0,
+      unassigned: 0,
+      constraints: { timeWindow: true, capacity: true, ng: true, crossFacility: true },
+      facilityBlocks: past.facilityBlocks,
+      unassignedChildIds: past.unassignedChildIds || [],
+    }))
+
+    // 現在の除外対象児童を全便から外して未配置へ送る（安全策）
+    if (excludedIds.length > 0) {
+      initial.facilityBlocks.forEach(block => {
+        block.trips.forEach(trip => {
+          trip.childIds = trip.childIds.filter(cid => !excludedIds.includes(cid))
+        })
+      })
+      initial.unassignedChildIds = (initial.unassignedChildIds || [])
+        .filter(cid => !excludedIds.includes(cid))
+    }
+
+    setSelectedPattern(null)
+    setAssignments(initial)
+    setAppliedSource(`past:${past.id}`)
+    setHistory([initial])
+    setHistoryIndex(0)
+    setPastModalOpen(false)
     setStep(3)
   }
 
@@ -172,7 +221,7 @@ export default function RouteOptimize({ facilityId, setPage }) {
 
   return (
     <div>
-      <PageHead step={step} setStep={setStep} />
+      <PageHead step={step} setStep={setStep} onOpenPastModal={() => setPastModalOpen(true)} />
 
       {step === 1 && (
         <Step1
@@ -182,6 +231,7 @@ export default function RouteOptimize({ facilityId, setPage }) {
           excludedIds={excludedIds} toggleExclude={toggleExclude}
           transportChildren={transportChildren}
           calculating={calculating} runAI={runAI}
+          onOpenPastModal={() => setPastModalOpen(true)}
         />
       )}
 
@@ -191,6 +241,9 @@ export default function RouteOptimize({ facilityId, setPage }) {
           transportChildren={transportChildren}
           adoptPattern={adoptPattern}
           setStep={setStep}
+          onOpenPastModal={() => setPastModalOpen(true)}
+          date={date}
+          direction={direction}
         />
       )}
 
@@ -209,11 +262,23 @@ export default function RouteOptimize({ facilityId, setPage }) {
           undo={undo} redo={redo}
           regionFilter={regionFilter} setRegionFilter={setRegionFilter}
           setStep={setStep}
+          appliedSource={appliedSource}
+          onOpenPastModal={() => setPastModalOpen(true)}
         />
       )}
 
       {step === 4 && assignments && (
         <Step4 assignments={assignments} date={date} direction={direction} setStep={setStep} />
+      )}
+
+      {/* 過去送迎組 参照モーダル */}
+      {pastModalOpen && (
+        <PastAssignmentsModal
+          date={date}
+          direction={direction}
+          onClose={() => setPastModalOpen(false)}
+          onAdopt={adoptPast}
+        />
       )}
     </div>
   )
@@ -222,7 +287,7 @@ export default function RouteOptimize({ facilityId, setPage }) {
 // ═══════════════════════════════════════════════════════════════
 // PAGE HEAD
 // ═══════════════════════════════════════════════════════════════
-function PageHead({ step, setStep }) {
+function PageHead({ step, setStep, onOpenPastModal }) {
   const steps = [
     { n: 1, label: '条件設定', desc: '制約・対象児童' },
     { n: 2, label: 'AI推奨',    desc: 'Pattern A / B' },
@@ -237,8 +302,8 @@ function PageHead({ step, setStep }) {
           <h1 className="page-title">送迎ルート最適化</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-          <button className="btn btn-ghost btn-sm">
-            <Download size={12} /> 過去の実行履歴
+          <button className="btn btn-ghost btn-sm" onClick={onOpenPastModal}>
+            <History size={12} /> 過去の送迎組を参照
           </button>
         </div>
       </div>
@@ -298,6 +363,7 @@ function Step1({
   activeConstraints, toggleConstraint,
   excludedIds, toggleExclude,
   transportChildren, calculating, runAI,
+  onOpenPastModal,
 }) {
   // 方面ごとの分布
   const distribution = useMemo(() => {
@@ -523,6 +589,45 @@ function Step1({
                 <div>→ 制約充足チェック...</div>
               </div>
             )}
+
+            {/* or 区切り */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              margin: '16px 0 14px',
+              fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 700,
+              letterSpacing: '0.16em', color: 'rgba(255,255,255,0.4)',
+              textTransform: 'uppercase',
+            }}>
+              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+              または
+              <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+            </div>
+
+            {/* 過去送迎組を参照 */}
+            <button
+              onClick={onOpenPastModal}
+              disabled={calculating}
+              className="btn"
+              style={{
+                width: '100%', padding: '12px', fontSize: 13, justifyContent: 'center',
+                background: 'rgba(255,255,255,0.06)',
+                color: '#fff',
+                border: '1px solid rgba(255,255,255,0.18)',
+                fontWeight: 600,
+              }}
+            >
+              <History size={14} /> 過去の同一曜日の送迎組を参照
+            </button>
+            <div style={{
+              marginTop: 8, fontSize: 10.5, lineHeight: 1.6,
+              color: 'rgba(255,255,255,0.55)',
+              textAlign: 'center',
+            }}>
+              <span style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.75)' }}>
+                {date ? `${date.slice(5).replace('-','/')}（${DOW_LABELS[getDayOfWeek(date)]}）` : ''}
+              </span>
+              {' '}と同じ曜日の過去の組み方を起点にできます
+            </div>
           </div>
         </div>
 
@@ -545,7 +650,7 @@ function Step1({
 // ═══════════════════════════════════════════════════════════════
 // STEP 2: AI Recommendation (Pattern A/B)
 // ═══════════════════════════════════════════════════════════════
-function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern, setStep }) {
+function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern, setStep, onOpenPastModal, date, direction }) {
   const [mapPattern, setMapPattern] = useState('A')
   const currentAI = mapPattern === 'A' ? AI_ASSIGNMENT_A : AI_ASSIGNMENT_B
   const currentSim = mapPattern === 'A' ? SIMULATION_A : SIMULATION_B
@@ -721,6 +826,26 @@ function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern,
         >
           条件を修正して再実行
         </button>
+
+        {/* 過去送迎組の参照ショートカット */}
+        <div className="surface" style={{ padding: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <History size={13} color="var(--ink-soft)" />
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              過去の組み方から起こす
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)', lineHeight: 1.6, marginBottom: 10 }}>
+            {date ? `${date.slice(5).replace('-','/')}（${DOW_LABELS[getDayOfWeek(date)]}曜）` : ''} と同一曜日の過去の確定送迎組を起点にすることもできます。
+          </div>
+          <button
+            onClick={onOpenPastModal}
+            className="btn btn-solid-ink"
+            style={{ width: '100%', padding: 10, justifyContent: 'center', fontSize: 12 }}
+          >
+            <History size={13} /> 過去の同一曜日の送迎組を参照
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -851,6 +976,7 @@ function Step3({
   history, historyIndex, undo, redo,
   regionFilter, setRegionFilter,
   setStep,
+  appliedSource, onOpenPastModal,
 }) {
   const changeCount = historyIndex
   const canUndo = historyIndex > 0
@@ -894,6 +1020,37 @@ function Step3({
           </div>
 
           <div style={{ flex: 1 }} />
+
+          {/* 出所バッジ */}
+          {appliedSource && (
+            <div
+              className="pill"
+              style={{
+                fontSize: 10,
+                background: appliedSource.startsWith('past:') ? 'var(--info-soft)' : 'var(--accent-faint)',
+                color: appliedSource.startsWith('past:') ? 'var(--info)' : 'var(--accent)',
+                border: 'none', fontWeight: 700,
+              }}
+              title="初期案の出所"
+            >
+              {appliedSource.startsWith('past:') ? (
+                <><History size={10} /> 過去組ベース</>
+              ) : (
+                <><Wand2 size={10} /> AI {appliedSource.replace('ai-','')}</>
+              )}
+            </div>
+          )}
+
+          {/* 別の過去組を読み込む */}
+          {onOpenPastModal && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={onOpenPastModal}
+              title="別の過去送迎組を起点として読み込む（現在の調整内容は上書きされます）"
+            >
+              <History size={11} /> 過去組を差替え
+            </button>
+          )}
 
           {/* Undo/Redo */}
           <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title={canUndo ? `元に戻す: ${history[historyIndex]?._action || ''}` : ''}>
@@ -1480,14 +1637,14 @@ function ViolationsTab({ violations, onHighlight }) {
           style={{
             padding: 10, marginBottom: 6,
             background: v.severity === 'must' ? 'var(--danger-soft, #fde3e1)' : 'var(--amber-soft)',
-            border: `1px solid ${v.severity === 'must' ? 'var(--danger, #c04a2a)' : 'var(--amber)'}`,
+            border: `1px solid ${v.severity === 'must' ? 'var(--danger, #c94a3b)' : 'var(--amber)'}`,
             borderRadius: 6, fontSize: 11,
           }}
           onMouseEnter={() => v.childIds?.[0] && onHighlight(v.childIds[0])}
           onMouseLeave={() => onHighlight(null)}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700, marginBottom: 3 }}>
-            <AlertTriangle size={11} color={v.severity === 'must' ? 'var(--danger, #c04a2a)' : 'var(--amber)'} />
+            <AlertTriangle size={11} color={v.severity === 'must' ? 'var(--danger, #c94a3b)' : 'var(--amber)'} />
             <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               {v.severity === 'must' ? 'MUST違反' : '警告'}
             </span>
@@ -1810,6 +1967,401 @@ function MiniStat({ label, value, suf, warn }) {
         <span className="num">{value}</span>
         <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 2, color: 'var(--ink-muted)' }}>{suf}</span>
       </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 過去送迎組 参照モーダル
+// ─────────────────────────────────────────────────────────────
+// 選択中の日付と同一曜日の過去送迎組を一覧表示。
+// 左: 日付一覧、右: 選択中の組のプレビュー（施設ブロック×便×児童）。
+// 「この組を適用」で assignments にロードして Step 3 に遷移する。
+// ═══════════════════════════════════════════════════════════════
+function PastAssignmentsModal({ date, direction, onClose, onAdopt }) {
+  const currentDow = getDayOfWeek(date)
+
+  // 同一曜日 × 同一方向でマッチ、なければ同一曜日だけで候補
+  const sameDowSameDir = useMemo(
+    () => findPastAssignmentsBy({ date, direction }),
+    [date, direction]
+  )
+  const sameDowAnyDir = useMemo(
+    () => findPastAssignmentsBy({ date }),
+    [date]
+  )
+  const otherDow = useMemo(
+    () => PAST_ASSIGNMENTS
+      .filter(p => p.date < date && p.dayOfWeek !== currentDow)
+      .sort((a, b) => b.date.localeCompare(a.date)),
+    [date, currentDow]
+  )
+
+  const [filter, setFilter] = useState('sameDow')   // 'sameDow' | 'all'
+  const list = filter === 'sameDow' ? sameDowSameDir : [...sameDowAnyDir, ...otherDow]
+  const [selectedId, setSelectedId] = useState(list[0]?.id ?? null)
+
+  // リスト切替時に選択を合わせる
+  useEffect(() => {
+    if (!list.find(p => p.id === selectedId)) {
+      setSelectedId(list[0]?.id ?? null)
+    }
+  }, [filter, list, selectedId])
+
+  const selected = list.find(p => p.id === selectedId)
+
+  // Esc で閉じる
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(28, 30, 38, 0.55)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, animation: 'fadeIn 0.18s ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: 'min(1080px, 96vw)',
+          maxHeight: '90vh',
+          display: 'flex', flexDirection: 'column',
+          boxShadow: 'var(--shadow-lg)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* ヘッダ */}
+        <div style={{
+          padding: '16px 22px', borderBottom: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 14,
+          background: 'var(--surface-soft)',
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 8,
+            background: 'var(--info-soft)', color: 'var(--info)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <History size={18} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700 }}>
+              過去の送迎組を参照
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+              対象日 <span className="num" style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)', fontWeight: 600 }}>
+                {date || '—'}
+              </span>
+              {currentDow != null && <>（<b style={{ color: 'var(--ink)' }}>{DOW_LABELS[currentDow]}曜</b>）</>}
+              {' · '}
+              方向 <b style={{ color: 'var(--ink)' }}>{direction === 'pickup' ? '迎え' : '送り'}</b>
+              {' · '}
+              選択した組をそのまま起点（初期案）として読み込みます
+            </div>
+          </div>
+          <button onClick={onClose} className="btn btn-ghost btn-sm"><X size={13} /> 閉じる</button>
+        </div>
+
+        {/* フィルタ */}
+        <div style={{
+          padding: '10px 22px', borderBottom: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div className="seg" style={{ fontSize: 11 }}>
+            <button className={filter === 'sameDow' ? 'active' : ''} onClick={() => setFilter('sameDow')}>
+              <Calendar size={11} /> 同一曜日 ({DOW_LABELS[currentDow]}) のみ
+            </button>
+            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
+              <CalendarClock size={11} /> 全履歴
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+            該当 <span className="num" style={{ color: 'var(--ink)', fontWeight: 700 }}>{list.length}</span> 件
+          </div>
+          {filter === 'sameDow' && sameDowSameDir.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <AlertCircle size={12} />
+              同一曜日 × 同一方向の履歴がありません。[全履歴] に切り替えるか、別条件をお試しください。
+            </div>
+          )}
+        </div>
+
+        {/* メイン: 左一覧 / 右プレビュー */}
+        <div style={{
+          flex: 1, minHeight: 0, display: 'grid',
+          gridTemplateColumns: '320px 1fr',
+        }}>
+          {/* 左: 日付リスト */}
+          <div style={{
+            borderRight: '1px solid var(--line)',
+            overflowY: 'auto', background: 'var(--bg)',
+          }}>
+            {list.length === 0 ? (
+              <div style={{ padding: 22, fontSize: 12, color: 'var(--ink-muted)', textAlign: 'center' }}>
+                該当する過去送迎組がありません
+              </div>
+            ) : (
+              list.map(p => {
+                const active = p.id === selectedId
+                const dow = p.dayOfWeek
+                const sameDow = dow === currentDow
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedId(p.id)}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '14px 18px',
+                      borderBottom: '1px solid var(--line-soft)',
+                      background: active ? 'var(--surface)' : 'transparent',
+                      borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                      cursor: 'pointer',
+                      transition: 'background 0.12s',
+                    }}
+                    onMouseEnter={(e) => !active && (e.currentTarget.style.background = 'var(--surface-soft)')}
+                    onMouseLeave={(e) => !active && (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <span className="num" style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 12,
+                        fontWeight: 700, color: active ? 'var(--accent)' : 'var(--ink)',
+                      }}>
+                        {p.date}
+                      </span>
+                      <span className="pill" style={{
+                        fontSize: 9, padding: '1px 6px',
+                        background: sameDow ? 'var(--sage-soft)' : 'var(--bg-deep)',
+                        color: sameDow ? 'var(--sage)' : 'var(--ink-muted)',
+                      }}>
+                        {DOW_LABELS[dow]}曜
+                      </span>
+                      <span className="pill pill-gray" style={{ fontSize: 9, padding: '1px 6px' }}>
+                        {p.direction === 'pickup' ? '迎え' : '送り'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', marginBottom: 3 }}>
+                      {p.label}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', display: 'flex', gap: 10 }}>
+                      <span>{p.stats?.tripCount ?? 0}便</span>
+                      <span>{p.stats?.childCount ?? 0}名</span>
+                      <span className="num">{p.stats?.totalDistance ?? 0}km</span>
+                    </div>
+                    {p.note && (
+                      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-soft)', fontStyle: 'italic', lineHeight: 1.45 }}>
+                        {p.note}
+                      </div>
+                    )}
+                  </button>
+                )
+              })
+            )}
+          </div>
+
+          {/* 右: プレビュー */}
+          <div style={{ overflowY: 'auto', padding: 22 }}>
+            {selected ? (
+              <PastAssignmentPreview past={selected} currentDow={currentDow} />
+            ) : (
+              <div style={{
+                height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'var(--ink-muted)', fontSize: 13,
+              }}>
+                左から過去の送迎組を選択してください
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* フッタ */}
+        <div style={{
+          padding: '14px 22px', borderTop: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: 'var(--surface-soft)',
+        }}>
+          <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', flex: 1, lineHeight: 1.5 }}>
+            <Info size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+            適用後、Step 3 の配車組表で児童のドラッグ&ドロップ・便の追加/削除・車両変更などの微調整ができます。
+            {' '}現在の「送迎対象から除外」リストに含まれる児童は自動的に外されます。
+          </div>
+          <button className="btn btn-ghost" onClick={onClose}>キャンセル</button>
+          <button
+            onClick={() => selected && onAdopt(selected.id)}
+            disabled={!selected}
+            className="btn btn-primary"
+            style={{
+              fontSize: 13, padding: '10px 18px',
+              background: selected ? 'var(--accent)' : 'var(--ink-faint)',
+              cursor: selected ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <Copy size={13} /> この組を適用 <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── 過去送迎組プレビュー ───
+function PastAssignmentPreview({ past, currentDow }) {
+  const sameDow = past.dayOfWeek === currentDow
+  return (
+    <div>
+      {/* ヘッダ */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span className="num" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--ink-muted)', fontWeight: 600 }}>
+            {past.date}
+          </span>
+          <span className="pill" style={{
+            fontSize: 9, padding: '1px 6px',
+            background: sameDow ? 'var(--sage-soft)' : 'var(--amber-soft)',
+            color: sameDow ? 'var(--sage)' : 'var(--amber)',
+          }}>
+            {DOW_LABELS[past.dayOfWeek]}曜 {sameDow && '(同一曜日)'}
+          </span>
+          <span className="pill pill-gray" style={{ fontSize: 9 }}>
+            {past.direction === 'pickup' ? '迎え' : '送り'}
+          </span>
+        </div>
+        <div className="display" style={{ fontSize: 20, marginBottom: 4 }}>
+          {past.label}
+        </div>
+        {past.note && (
+          <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
+            {past.note}
+          </div>
+        )}
+        {past.confirmedBy && (
+          <div style={{ fontSize: 10.5, color: 'var(--ink-faint)', marginTop: 4 }}>
+            確定者: {past.confirmedBy}
+          </div>
+        )}
+      </div>
+
+      {/* サマリー */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10,
+        padding: 14, background: 'var(--bg)',
+        borderRadius: 'var(--radius)', marginBottom: 18,
+      }}>
+        <MiniStat label="総所要" value={past.stats?.totalTime ?? '—'} suf="分" />
+        <MiniStat label="総距離" value={past.stats?.totalDistance ?? '—'} suf="km" />
+        <MiniStat label="便数"   value={past.stats?.tripCount ?? '—'} suf="便" />
+        <MiniStat label="児童数" value={past.stats?.childCount ?? '—'} suf="名" />
+      </div>
+
+      {/* 施設ブロック別プレビュー */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {past.facilityBlocks.map((block, bIdx) => {
+          const fac = FACILITY_BY_ID[block.facility]
+          return (
+            <div key={bIdx} style={{
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--radius)', overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '8px 14px',
+                background: (fac?.color || '#999') + '12',
+                borderBottom: '1px solid var(--line)',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{
+                  width: 10, height: 10, borderRadius: 2,
+                  background: fac?.color || '#999',
+                }} />
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700 }}>
+                  {fac?.short || block.facility}
+                </span>
+                <span style={{ fontSize: 10.5, color: 'var(--ink-muted)' }}>
+                  · {block.leadTeacher} · {block.trips.length}便
+                </span>
+              </div>
+              <div>
+                {block.trips.map((trip, tIdx) => {
+                  const v = VEHICLE_BY_ID[trip.vehicle]
+                  return (
+                    <div key={tIdx} style={{
+                      padding: '10px 14px',
+                      borderTop: tIdx > 0 ? '1px solid var(--line-soft)' : 'none',
+                      display: 'flex', alignItems: 'flex-start', gap: 12,
+                    }}>
+                      <div style={{
+                        width: 34, flexShrink: 0,
+                        fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700,
+                        color: v?.color || 'var(--ink)',
+                      }}>
+                        {trip.tripNo}<span style={{ fontSize: 9, color: 'var(--ink-muted)', fontWeight: 500 }}>便</span>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{v?.name || trip.vehicle}</span>
+                          <span style={{ color: 'var(--ink-muted)' }}>·</span>
+                          <span style={{ color: 'var(--ink-muted)' }}>{trip.teacher}</span>
+                          <span style={{ color: 'var(--ink-muted)' }}>·</span>
+                          <span className="num" style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--ink-muted)' }}>
+                            {trip.estDepart}〜{trip.estArrive}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {trip.childIds.map(cid => {
+                            const c = CHILD_BY_ID[cid]
+                            return (
+                              <span key={cid} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                padding: '3px 8px', borderRadius: 4,
+                                background: 'var(--bg-deep)', fontSize: 11,
+                                fontWeight: 500,
+                              }}>
+                                {c?.name || cid}
+                                <span style={{ fontSize: 9, color: 'var(--ink-muted)' }}>{c?.grade}</span>
+                              </span>
+                            )
+                          })}
+                        </div>
+                        {trip.note && (
+                          <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
+                            ※ {trip.note}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{
+                        fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-muted)',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {trip.childIds.length}名
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {(past.unassignedChildIds?.length > 0) && (
+        <div style={{
+          marginTop: 14, padding: 12,
+          background: 'var(--amber-soft)', borderRadius: 'var(--radius)',
+          borderLeft: '3px solid var(--amber)',
+          fontSize: 11, color: '#8b5a0c',
+        }}>
+          <b>未配置 {past.unassignedChildIds.length}名</b>：
+          {past.unassignedChildIds.map(cid => CHILD_BY_ID[cid]?.name || cid).join('、')}
+        </div>
+      )}
     </div>
   )
 }

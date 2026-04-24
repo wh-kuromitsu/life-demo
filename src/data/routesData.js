@@ -14,11 +14,11 @@ export const BASE = {
 // 春日井市を3方面 × 3時間帯 = 9セルに分割
 // 実運用では Google Maps Distance Matrix API + K-means で自動決定
 export const REGIONS = [
-  { id: 'east',    name: '東部',   color: '#c04a2a', bounds: { xMin: 500, xMax: 800, yMin: 0, yMax: 500 },
+  { id: 'east',    name: '東部',   color: '#e88442', bounds: { xMin: 500, xMax: 800, yMin: 0, yMax: 500 },
     desc: '神領・坂下・東野・高蔵寺エリア' },
-  { id: 'central', name: '中央部', color: '#3a6b4e', bounds: { xMin: 300, xMax: 500, yMin: 0, yMax: 500 },
+  { id: 'central', name: '中央部', color: '#6fa373', bounds: { xMin: 300, xMax: 500, yMin: 0, yMax: 500 },
     desc: '鳥居松・篠木・八幡・北城エリア' },
-  { id: 'west',    name: '西部',   color: '#c78825', bounds: { xMin: 0,   xMax: 300, yMin: 0, yMax: 500 },
+  { id: 'west',    name: '西部',   color: '#d9992b', bounds: { xMin: 0,   xMax: 300, yMin: 0, yMax: 500 },
     desc: '大手・小野・上条・丸田・柏原・松山エリア' },
 ]
 
@@ -282,3 +282,430 @@ export const RECENT_ACTIVITY = [
   { time: '昨日 15:00', type: 'sage', text: '新規登録：浅野 結衣' },
   { time: '昨日 10:30', type: 'info', text: 'HUGからの取込 — 受給者証30件の差分反映' },
 ]
+
+// ═══════════════════════════════════════════════════════════════
+// 過去の送迎組履歴（曜日別に参照可能）
+// ─────────────────────────────────────────────────────────────
+// 実運用では過去に確定した送迎組を日付付きでDBに保存し、
+// 「同一曜日」で絞り込んで起点として再利用できるようにする。
+// ─ 曜日: 0=日, 1=月, 2=火, 3=水, 4=木, 5=金, 6=土
+// ═══════════════════════════════════════════════════════════════
+export const PAST_ASSIGNMENTS = [
+  {
+    id: 'past_20260417',
+    date: '2026-04-17',       // 金曜日
+    dayOfWeek: 5,
+    direction: 'pickup',
+    label: '4/17(金) 迎え便',
+    note: '前週の金曜。安定運用・制約違反ゼロで確定',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:40' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c11'], region: 'east',
+            estDepart: '14:20', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c15'], region: 'central',
+            estDepart: '14:35', estArrive: '15:15' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00',
+            note: '翔陽連携4名 同便' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 68, totalDistance: 14.2, tripCount: 6, childCount: 14 },
+  },
+  {
+    id: 'past_20260410',
+    date: '2026-04-10',       // 金曜日
+    dayOfWeek: 5,
+    direction: 'pickup',
+    label: '4/10(金) 迎え便',
+    note: '新年度初週。中村ひまりを2便目に分離した構成',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06'], region: 'east',
+            estDepart: '13:50', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c11', 'c26'], region: 'east',
+            estDepart: '14:25', estArrive: '15:40' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c15', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:25' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 72, totalDistance: 15.1, tripCount: 5, childCount: 14 },
+  },
+  {
+    id: 'past_20260403',
+    date: '2026-04-03',       // 金曜日
+    dayOfWeek: 5,
+    direction: 'pickup',
+    label: '4/3(金) 迎え便',
+    note: '木村先生 研修のため労務調整あり',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c11', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:30' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c06'], region: 'east',
+            estDepart: '14:40', estArrive: '15:20' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c15', 'c19'], region: 'central',
+            estDepart: '14:40', estArrive: '15:30' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '松田先生',
+            childIds: ['c22'], region: 'west',
+            estDepart: '14:15', estArrive: '14:55' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 74, totalDistance: 15.6, tripCount: 6, childCount: 14 },
+  },
+  {
+    id: 'past_20260416',
+    date: '2026-04-16',       // 木曜日
+    dayOfWeek: 4,
+    direction: 'pickup',
+    label: '4/16(木) 迎え便',
+    note: '翔陽中の部活終了時刻変更に対応',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c11', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:40' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c15'], region: 'central',
+            estDepart: '14:35', estArrive: '15:15' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:35', estArrive: '16:05' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 70, totalDistance: 14.8, tripCount: 5, childCount: 14 },
+  },
+  {
+    id: 'past_20260409',
+    date: '2026-04-09',       // 木曜日
+    dayOfWeek: 4,
+    direction: 'pickup',
+    label: '4/9(木) 迎え便',
+    note: '標準的な木曜日の編成',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:30' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c11'], region: 'east',
+            estDepart: '14:25', estArrive: '15:05' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c15', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:25' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 69, totalDistance: 14.5, tripCount: 5, childCount: 14 },
+  },
+  {
+    id: 'past_20260415',
+    date: '2026-04-15',       // 水曜日
+    dayOfWeek: 3,
+    direction: 'pickup',
+    label: '4/15(水) 迎え便',
+    note: '水曜定例。4便で回せる編成',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c11', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:35' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c15', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:25' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 67, totalDistance: 13.9, tripCount: 4, childCount: 14 },
+  },
+  {
+    id: 'past_20260414',
+    date: '2026-04-14',       // 火曜日
+    dayOfWeek: 2,
+    direction: 'pickup',
+    label: '4/14(火) 迎え便',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:30' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c11'], region: 'east',
+            estDepart: '14:25', estArrive: '15:05' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c15'], region: 'central',
+            estDepart: '14:35', estArrive: '15:15' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 68, totalDistance: 14.2, tripCount: 6, childCount: 14 },
+  },
+  {
+    id: 'past_20260413',
+    date: '2026-04-13',       // 月曜日
+    dayOfWeek: 1,
+    direction: 'pickup',
+    label: '4/13(月) 迎え便',
+    note: '月曜は学童3名追加（c24, c30含む）',
+    confirmedBy: '松浦先生',
+    facilityBlocks: [
+      {
+        facility: 'plus', leadTeacher: '松田先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c01', 'c06', 'c26'], region: 'east',
+            estDepart: '13:50', estArrive: '15:30' },
+          { tripNo: 2, vehicle: 'v04', teacher: '松田先生',
+            childIds: ['c11'], region: 'east',
+            estDepart: '14:25', estArrive: '15:05' },
+        ],
+      },
+      {
+        facility: 'progress', leadTeacher: '鈴木先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c02', 'c03', 'c29'], region: 'central',
+            estDepart: '14:10', estArrive: '15:20' },
+          { tripNo: 2, vehicle: 'v01', teacher: '鈴木先生',
+            childIds: ['c15'], region: 'central',
+            estDepart: '14:35', estArrive: '15:15' },
+        ],
+      },
+      {
+        facility: 'labo', leadTeacher: '木村先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v08', teacher: '木村先生',
+            childIds: ['c22', 'c19'], region: 'west',
+            estDepart: '14:15', estArrive: '15:00' },
+        ],
+      },
+      {
+        facility: 'marche', leadTeacher: '佐藤先生',
+        trips: [
+          { tripNo: 1, vehicle: 'v06', teacher: '佐藤先生',
+            childIds: ['c09', 'c10', 'c24', 'c30'], region: 'central',
+            estDepart: '14:30', estArrive: '16:00' },
+        ],
+      },
+    ],
+    unassignedChildIds: [],
+    stats: { totalTime: 68, totalDistance: 14.2, tripCount: 6, childCount: 14 },
+  },
+]
+
+// 日付文字列(YYYY-MM-DD)から曜日(0=日 ... 6=土)を取得
+export function getDayOfWeek(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return null
+  return d.getDay()
+}
+
+// 曜日インデックスを日本語表記に変換
+export const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土']
+
+// 指定日付と同一曜日かつ指定方向の過去送迎組を、新しい順に返す
+export function findPastAssignmentsBy({ date, direction }) {
+  const dow = getDayOfWeek(date)
+  if (dow == null) return []
+  return PAST_ASSIGNMENTS
+    .filter(p =>
+      p.dayOfWeek === dow &&
+      (direction ? p.direction === direction : true) &&
+      p.date < date                 // 選択日より過去のみ
+    )
+    .sort((a, b) => b.date.localeCompare(a.date))
+}

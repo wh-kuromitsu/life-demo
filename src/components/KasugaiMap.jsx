@@ -24,7 +24,7 @@ function makeDivIcon(html, size = [28, 28]) {
 const BASE_ICON = makeDivIcon(`
   <div style="
     width: 36px; height: 36px;
-    background: #c04a2a;
+    background: #e88442;
     border: 3px solid #fff;
     border-radius: 50%;
     box-shadow: 0 3px 8px rgba(0,0,0,0.3);
@@ -90,8 +90,8 @@ function HighlightPulse({ position }) {
   if (!position) return null
   return (
     <>
-      <CircleMarker center={position} radius={8} pathOptions={{ fillColor: '#c04a2a', fillOpacity: 1, color: '#fff', weight: 2 }} />
-      <CircleMarker center={position} radius={18} pathOptions={{ fillColor: '#c04a2a', fillOpacity: 0.15, color: '#c04a2a', weight: 1.5, className: 'pulse-ring' }} />
+      <CircleMarker center={position} radius={8} pathOptions={{ fillColor: '#e88442', fillOpacity: 1, color: '#fff', weight: 2 }} />
+      <CircleMarker center={position} radius={18} pathOptions={{ fillColor: '#e88442', fillOpacity: 0.15, color: '#e88442', weight: 1.5, className: 'pulse-ring' }} />
     </>
   )
 }
@@ -122,7 +122,7 @@ export default function KasugaiMap({ routes = [], highlightChildren = [], select
         {/* BASE: にじいろCOMMON */}
         <Marker position={[BASE.lat, BASE.lng]} icon={BASE_ICON}>
           <Tooltip direction="top" offset={[0, -20]} opacity={1} permanent>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#c04a2a' }}>{BASE.name}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#e88442' }}>{BASE.name}</div>
           </Tooltip>
         </Marker>
 
@@ -171,7 +171,7 @@ export default function KasugaiMap({ routes = [], highlightChildren = [], select
         display: 'flex', gap: 14, alignItems: 'center',
       }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ width: 10, height: 10, background: '#c04a2a', borderRadius: '50%', border: '1.5px solid #fff', boxShadow: '0 0 0 1px #c04a2a' }} />
+          <span style={{ width: 10, height: 10, background: '#e88442', borderRadius: '50%', border: '1.5px solid #fff', boxShadow: '0 0 0 1px #e88442' }} />
           <span>拠点</span>
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
