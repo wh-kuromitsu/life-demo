@@ -762,11 +762,6 @@ function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern,
                   Pattern {mapPattern}
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
-                {mapPattern === 'A'
-                  ? 'OR-Tools VRPによる厳密最適化。国道制約・同乗NGすべて充足'
-                  : 'K-Means+最近傍法の高速近似。未配置2名あり、手動調整の起点向き'}
-              </div>
             </div>
             <div className="seg" style={{ fontSize: 11 }}>
               <button className={mapPattern === 'A' ? 'active' : ''} onClick={() => setMapPattern('A')}>
@@ -799,30 +794,6 @@ function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern,
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'sticky', top: 20, alignSelf: 'flex-start' }}>
-        <div className="panel">
-          <div className="panel-header">
-            <div className="panel-title">AIの提案内容</div>
-          </div>
-          <div style={{ padding: 16, fontSize: 11.5, color: 'var(--ink-soft)', lineHeight: 1.75 }}>
-            <p style={{ marginBottom: 10, padding: 10, background: mapPattern === 'A' ? 'var(--accent-faint)' : 'transparent', borderRadius: 6, borderLeft: mapPattern === 'A' ? '3px solid var(--accent)' : '3px solid transparent', margin: mapPattern === 'A' ? '0 -4px 10px' : undefined }}>
-              <b style={{ color: 'var(--ink)' }}>Pattern A</b> は OR-Tools VRPで<b>全制約を同時充足</b>する厳密解。
-              距離14.2kmで未配置ゼロ。
-            </p>
-            <p style={{ marginBottom: 10, padding: 10, background: mapPattern === 'B' ? 'var(--amber-soft)' : 'transparent', borderRadius: 6, borderLeft: mapPattern === 'B' ? '3px solid var(--amber)' : '3px solid transparent', margin: mapPattern === 'B' ? '0 -4px 10px' : undefined }}>
-              <b style={{ color: 'var(--ink)' }}>Pattern B</b> は K-Means+最近傍法による<b>高速近似解</b>。
-              手動調整の起点として使いやすい。
-            </p>
-            <div style={{ marginTop: 14, padding: 10, background: 'var(--sage-soft)', borderRadius: 6, borderLeft: '3px solid var(--sage)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--sage)', marginBottom: 4 }}>
-                <MousePointerClick size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
-                採用後、配車組表で調整可能
-              </div>
-              <div style={{ fontSize: 10.5, color: 'var(--ink-soft)' }}>
-                児童のドラッグ&ドロップ、便の追加・削除、車両変更が直感的に行えます。
-              </div>
-            </div>
-          </div>
-        </div>
 
         <button
           onClick={() => setStep(1)}
@@ -914,9 +885,6 @@ function PatternCompareCard({ ai, recommended, active, onPreview, onAdopt }) {
       <div style={{ padding: 20, paddingTop: active ? 32 : 20 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 3 }}>
           <span className="display" style={{ fontSize: 22, color: active ? 'var(--accent)' : recommended ? 'var(--accent)' : 'var(--ink)' }}>{ai.label}</span>
-        </div>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-muted)', marginBottom: 18 }}>
-          {ai.algo}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
@@ -2259,7 +2227,7 @@ function Step4({ assignments, date, direction, setStep }) {
             <div style={{ flex: 1 }}>
               <div className="display" style={{ fontSize: 16, color: 'var(--sage)' }}>配車確定しました</div>
               <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 3 }}>
-                {date} の{direction === 'pickup' ? '迎え' : '送り'}便に反映。各ドライバーのスマホへ通知送信済み。
+                {date} の{direction === 'pickup' ? '迎え' : '送り'}便に反映。
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -2327,15 +2295,6 @@ function Step4({ assignments, date, direction, setStep }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div className="surface" style={{ padding: 18 }}>
-          <div className="eyebrow" style={{ marginBottom: 10 }}>次のアクション</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Play size={12} /> 運行開始モード</button>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Users size={12} /> 保護者通知を送信</button>
-            <button className="btn btn-ghost" style={{ justifyContent: 'flex-start' }}><Download size={12} /> 配送記録をHUGへ</button>
-          </div>
-        </div>
-
         <button onClick={() => setStep(3)} className="btn btn-ghost" style={{ padding: 10, justifyContent: 'center' }}>
           配車組表に戻る
         </button>
