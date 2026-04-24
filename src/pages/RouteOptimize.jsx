@@ -746,9 +746,6 @@ function Step2({ regionFilter, setRegionFilter, transportChildren, adoptPattern,
               )
             })}
           </div>
-          <div style={{ padding: '0 16px 14px', fontSize: 10.5, color: 'var(--ink-muted)', fontStyle: 'italic' }}>
-            <span style={{ color: 'var(--sage)' }}>緑</span>/<span style={{ color: 'var(--amber)' }}>琥珀</span> の小さい数値は、もう一方のPatternとの差分
-          </div>
         </div>
 
         {/* 地図プレビュー (Pattern切替可能) */}
