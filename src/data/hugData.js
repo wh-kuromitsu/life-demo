@@ -8,12 +8,12 @@ export const HUG_STATUS = {
 }
 
 export const HUG_DIFF = [
-  { type: 'add',    category: '児童', name: '浅野 結衣',    note: '新規登録' },
-  { type: 'update', category: '児童', name: '渡辺 颯太',    note: '住所変更' },
-  { type: 'update', category: '受給者証', name: '田中 蓮', note: '更新期限: 2026/09/30' },
+  { type: 'add',    category: '児童', name: 'アサギ ユイ',    note: '新規登録' },
+  { type: 'update', category: '児童', name: 'フウカ ソラ',    note: '住所変更' },
+  { type: 'update', category: '受給者証', name: 'ミナト レン', note: '更新期限: 2026/09/30' },
   { type: 'add',    category: '加算', name: '家族支援加算(Ⅰ)', note: '加算項目' },
-  { type: 'update', category: '契約曜日', name: '石川 直樹', note: '火・木 → 火・木・金' },
-  { type: 'update', category: '緊急連絡先', name: '森 雄太', note: '緊急連絡先2を更新' },
+  { type: 'update', category: '契約曜日', name: 'セキネ ナオ', note: '火・木 → 火・木・金' },
+  { type: 'update', category: '緊急連絡先', name: 'モリオ ユタ', note: '緊急連絡先2を更新' },
 ]
 
 export const HUG_LOGS = [

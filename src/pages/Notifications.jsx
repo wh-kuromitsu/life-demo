@@ -3,12 +3,12 @@ import { useState } from 'react'
 import { Bell, BellOff, CheckCircle2, AlertTriangle, Info, Users, Car, RefreshCw, Trash2, Check } from 'lucide-react'
 
 const NOTIFICATIONS = [
-  { id: 1, type: 'warning', category: '欠席',   title: '加藤 結菜 — 本日欠席連絡',           body: '保護者（加藤 陽子様）より09:12に欠席連絡。送迎ルートから自動除外済みです。', time: '09:12', date: '今日', read: false },
-  { id: 2, type: 'sage',    category: '送迎',   title: 'ハイエースA — 午前便 送迎完了',       body: '田中 蓮、山本 悠斗、中村 ひまりの送迎が完了しました（到着 15:40）。', time: '15:40', date: '今日', read: false },
-  { id: 3, type: 'info',    category: '児童',   title: '渡辺 颯太 — 住所変更',                body: '渡辺 颯太の送迎先住所が更新されました。次回のルート最適化に反映されます。', time: '08:30', date: '今日', read: false },
+  { id: 1, type: 'warning', category: '欠席',   title: 'カナン ユナ — 本日欠席連絡',           body: '保護者（カナン ヨウコ様）より09:12に欠席連絡。送迎ルートから自動除外済みです。', time: '09:12', date: '今日', read: false },
+  { id: 2, type: 'sage',    category: '送迎',   title: 'ハイエースA — 午前便 送迎完了',       body: 'ミナト レン、リンド ユウ、トワ ヒマリの送迎が完了しました（到着 15:40）。', time: '15:40', date: '今日', read: false },
+  { id: 3, type: 'info',    category: '児童',   title: 'フウカ ソラ — 住所変更',                body: 'フウカ ソラの送迎先住所が更新されました。次回のルート最適化に反映されます。', time: '08:30', date: '今日', read: false },
   { id: 4, type: 'info',    category: 'HUG',    title: 'HUG連携 — 定期同期完了',              body: '20:00の定期同期が完了しました。差分6件を反映済。', time: '08:30', date: '今日', read: true },
   { id: 5, type: 'info',    category: 'システム', title: '送迎表（4/20）確定・PDFエクスポート', body: '昨日の送迎表が確定され、PDFが出力されました。', time: '17:45', date: '昨日', read: true },
-  { id: 6, type: 'sage',    category: '児童',   title: '新規登録：浅野 結衣',                  body: '浅野 結衣（翔陽連携）の利用者登録が完了。施設：にじいろLOHASPO', time: '15:00', date: '昨日', read: true },
+  { id: 6, type: 'sage',    category: '児童',   title: '新規登録：アサギ ユイ',                  body: 'アサギ ユイ（翔陽連携）の利用者登録が完了。施設：にじいろLOHASPO', time: '15:00', date: '昨日', read: true },
   { id: 7, type: 'warning', category: '車両',   title: 'ハイエースA — 点検期限',                 body: '車両の次回点検期限は2026/05/15です。早めに手配をお願いします。', time: '09:00', date: '3日前', read: true },
   { id: 8, type: 'info',    category: 'システム', title: '月次レポート作成完了',                  body: '2026年3月の月次利用者レポートが作成されました。', time: '08:00', date: '5日前', read: true },
 ]

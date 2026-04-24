@@ -250,7 +250,7 @@ export default function Sidebar({ current, onNavigate, facilityId, onFacilityCha
             fontFamily: 'var(--font-display)',
             boxShadow: '0 2px 6px rgba(232,132,66,0.3)',
           }}>
-            松
+            マ
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
@@ -258,7 +258,7 @@ export default function Sidebar({ current, onNavigate, facilityId, onFacilityCha
               fontSize: 12, fontWeight: 700,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
-              松岡 祐輝
+              マキノ ユウキ
             </div>
             <div style={{
               color: 'var(--sidebar-ink-mute)',

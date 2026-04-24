@@ -178,14 +178,14 @@ function AccountSettings() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <SCard title="プロフィール">
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid var(--line-soft)', marginBottom: 4 }}>
-          <div style={{ width: 54, height: 54, borderRadius: 14, background: 'linear-gradient(135deg,var(--rb-orange),var(--rb-pink),var(--rb-purple))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, boxShadow: '0 4px 10px rgba(232,132,66,0.3)' }}>松</div>
+          <div style={{ width: 54, height: 54, borderRadius: 14, background: 'linear-gradient(135deg,var(--rb-orange),var(--rb-pink),var(--rb-purple))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 800, boxShadow: '0 4px 10px rgba(232,132,66,0.3)' }}>マ</div>
           <div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700 }}>松岡 祐輝</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700 }}>マキノ ユウキ</div>
             <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>システム管理者 / Admin</div>
           </div>
         </div>
         <SGrid>
-          <Field label="氏名"><input defaultValue="松岡 祐輝" style={{ width: '100%' }} /></Field>
+          <Field label="氏名"><input defaultValue="マキノ ユウキ" style={{ width: '100%' }} /></Field>
           <Field label="メールアドレス"><input defaultValue="matsuoka@education-net.co.jp" style={{ width: '100%' }} /></Field>
         </SGrid>
       </SCard>

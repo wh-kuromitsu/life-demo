@@ -13,27 +13,34 @@
 // 設計思想:
 //   「AIが完璧な案を出すのではなく、AIが叩き台を作り、
 //    現場が臨機応変に手組みで調整する」
-//   松浦先生のVBA操作の『身体知』を活かせるUI。
+//   現場担当者のVBA操作の『身体知』を活かせるUI。
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   Zap, Play, MapPin, Clock, AlertTriangle, Shield, Users, Car,
-  RefreshCw, ChevronRight, CheckCircle2, X, Download, Map, Navigation,
+  RefreshCw, ChevronRight, CheckCircle2, X, Download, Map as MapIcon, Navigation,
   Sliders, FlaskConical, Route, Eye, Grid3x3, MousePointerClick,
   Undo2, Redo2, Save, Plus, Minus, Wand2, UserCheck, Compass,
   ArrowLeftRight, Trash2, AlertCircle, Info, BarChart3, GripVertical,
   History, Calendar, CalendarClock, Copy,
+  Building2, Home, Wrench, Settings,
 } from 'lucide-react'
 import KasugaiMap from '../components/KasugaiMap'
 import UnassignedPanel from '../components/UnassignedPanel'
 import { CHILDREN, CHILD_BY_ID } from '../data/childrenData'
-import { VEHICLES, VEHICLE_BY_ID } from '../data/vehiclesData'
+import {
+  VEHICLES, VEHICLE_BY_ID,
+  DAY_STATUSES, DAY_STATUS_BY_ID, INITIAL_VEHICLE_DAY_STATUS, canUseVehicle,
+} from '../data/vehiclesData'
 import {
   SIMULATION_A, SIMULATION_B, AI_ASSIGNMENT_A, AI_ASSIGNMENT_B,
   REGIONS, TIME_BANDS, classifyRegion, classifyTimeBand, BASE,
   PAST_ASSIGNMENTS, findPastAssignmentsBy, getDayOfWeek, DOW_LABELS,
 } from '../data/routesData'
-import { FACILITY_BY_ID } from '../data/facilitiesData'
+import {
+  FACILITY_BY_ID, BUILDINGS, BUILDING_BY_ID,
+  FACILITIES_BY_BUILDING, buildingOf,
+} from '../data/facilitiesData'
 import { LOC_BY_ID } from '../data/schoolsData'
 
 const TODAY = new Date()
@@ -72,6 +79,22 @@ export default function RouteOptimize({ facilityId, setPage }) {
   // 過去送迎組参照モーダル
   const [pastModalOpen, setPastModalOpen] = useState(false)
   const [appliedSource, setAppliedSource] = useState(null)   // 'ai-A' | 'ai-B' | 'past:<id>'
+
+  // STEP 3 ビュー設定
+  const [groupBy, setGroupBy] = useState('building')   // 'facility' | 'building'
+
+  // 車両の当日ステータス（ページ内編集）
+  const [vehicleStatus, setVehicleStatus] = useState(() =>
+    JSON.parse(JSON.stringify(INITIAL_VEHICLE_DAY_STATUS))
+  )
+  const [vehicleStatusModalOpen, setVehicleStatusModalOpen] = useState(false)
+
+  // 児童の当日ステータス（欠席・早退・メモなど）
+  // { [childId]: { status: 'present'|'absent'|'leave_early'|'late', note: '' } }
+  const [childDayStatus, setChildDayStatus] = useState({})
+  const [childEditModal, setChildEditModal] = useState(null) // { childId } or null
+  // 車両の当日ステータスを1台だけピンポイント編集するモーダル
+  const [vehicleQuickEdit, setVehicleQuickEdit] = useState(null) // { vehicleId } or null
 
   const transportChildren = useMemo(() =>
     CHILDREN.filter(c =>
@@ -264,6 +287,13 @@ export default function RouteOptimize({ facilityId, setPage }) {
           setStep={setStep}
           appliedSource={appliedSource}
           onOpenPastModal={() => setPastModalOpen(true)}
+          groupBy={groupBy} setGroupBy={setGroupBy}
+          vehicleStatus={vehicleStatus} setVehicleStatus={setVehicleStatus}
+          vehicleStatusModalOpen={vehicleStatusModalOpen}
+          setVehicleStatusModalOpen={setVehicleStatusModalOpen}
+          childDayStatus={childDayStatus} setChildDayStatus={setChildDayStatus}
+          childEditModal={childEditModal} setChildEditModal={setChildEditModal}
+          vehicleQuickEdit={vehicleQuickEdit} setVehicleQuickEdit={setVehicleQuickEdit}
         />
       )}
 
@@ -941,7 +971,7 @@ function PatternCompareCard({ ai, recommended, active, onPreview, onAdopt }) {
               fontWeight: active ? 700 : 500,
             }}
           >
-            <Map size={12} /> {active ? '地図表示中' : '地図で見る'}
+            <MapIcon size={12} /> {active ? '地図表示中' : '地図で見る'}
           </button>
           <button
             onClick={onAdopt}
@@ -965,9 +995,97 @@ function constraintLabel(key) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ErrorBoundary — Step3 レンダリング時のクラッシュをトラップ
+// ═══════════════════════════════════════════════════════════════
+import { Component as ReactComponent } from 'react'
+class Step3ErrorBoundary extends ReactComponent {
+  constructor(props) {
+    super(props)
+    this.state = { error: null, info: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    console.error('[Step3ErrorBoundary]', error, info)
+    this.setState({ info })
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          padding: 20,
+          border: '2px solid var(--danger)',
+          background: 'var(--danger-soft)',
+          borderRadius: 12,
+          margin: 20,
+          fontFamily: 'var(--font-body)',
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--danger)', marginBottom: 8 }}>
+            ⚠ 配車組表の描画でエラーが発生しました
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 10 }}>
+            <b>{this.state.error?.name}:</b> {this.state.error?.message}
+          </div>
+          {this.state.info?.componentStack && (
+            <pre style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              background: 'var(--surface)',
+              padding: 10,
+              borderRadius: 6,
+              overflowX: 'auto',
+              maxHeight: 300,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {this.state.info.componentStack}
+            </pre>
+          )}
+          <button
+            onClick={() => this.setState({ error: null, info: null })}
+            className="btn btn-ghost btn-sm"
+            style={{ marginTop: 10 }}
+          >
+            再レンダリング
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// ─── ツールバーのラベル付きグループ ───
+function ToolbarGroup({ label, children }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700,
+        color: 'var(--ink-muted)',
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        fontFamily: 'var(--font-display)',
+      }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
 // STEP 3: 配車組表 (フラグシップ)
 // ═══════════════════════════════════════════════════════════════
-function Step3({
+function Step3(props) {
+  return (
+    <Step3ErrorBoundary>
+      <Step3Inner {...props} />
+    </Step3ErrorBoundary>
+  )
+}
+
+function Step3Inner({
   assignments, violations, view, setView,
   selectedTripKey, setSelectedTripKey,
   highlightChildId, setHighlightChildId,
@@ -977,6 +1095,12 @@ function Step3({
   regionFilter, setRegionFilter,
   setStep,
   appliedSource, onOpenPastModal,
+  groupBy, setGroupBy,
+  vehicleStatus, setVehicleStatus,
+  vehicleStatusModalOpen, setVehicleStatusModalOpen,
+  childDayStatus, setChildDayStatus,
+  childEditModal, setChildEditModal,
+  vehicleQuickEdit, setVehicleQuickEdit,
 }) {
   const changeCount = historyIndex
   const canUndo = historyIndex > 0
@@ -984,44 +1108,70 @@ function Step3({
 
   return (
     <div>
-      {/* ツールバー */}
+      {/* ツールバー（2段組） */}
       <div className="panel" style={{ marginBottom: 14, padding: 0 }}>
-        <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--line)' }}>
-          {/* View切替 */}
-          <div className="seg" style={{ fontSize: 11 }}>
-            <button className={view === 'matrix' ? 'active' : ''} onClick={() => setView('matrix')}>
-              <Grid3x3 size={11} /> 配車組表
-            </button>
-            <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')}>
-              <ArrowLeftRight size={11} /> 組表＋地図
-            </button>
-            <button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>
-              <Map size={11} /> 地図のみ
-            </button>
-          </div>
-
-          <div style={{ width: 1, height: 24, background: 'var(--line)' }} />
-
-          {/* 方面フィルタ */}
-          <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>方面:</span>
-          <div className="seg" style={{ fontSize: 11 }}>
-            <button className={regionFilter === 'all' ? 'active' : ''} onClick={() => setRegionFilter('all')}>全て</button>
-            {REGIONS.map(r => (
-              <button
-                key={r.id}
-                className={regionFilter === r.id ? 'active' : ''}
-                onClick={() => setRegionFilter(r.id)}
-                style={regionFilter === r.id ? { color: r.color, borderColor: r.color } : {}}
-              >
-                <span style={{ width: 6, height: 6, borderRadius: 1, background: r.color, display: 'inline-block', marginRight: 4 }} />
-                {r.name}
+        {/* ─ 1段目: 表示コントロール（ビュー/単位/方面） ─ */}
+        <div style={{
+          padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 14,
+          borderBottom: '1px solid var(--line-soft)',
+          flexWrap: 'wrap',
+        }}>
+          <ToolbarGroup label="表示">
+            <div className="seg" style={{ fontSize: 11 }}>
+              <button className={view === 'matrix' ? 'active' : ''} onClick={() => setView('matrix')}>
+                <Grid3x3 size={11} /> 組表
               </button>
-            ))}
-          </div>
+              <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')}>
+                <ArrowLeftRight size={11} /> 組表＋地図
+              </button>
+              <button className={view === 'map' ? 'active' : ''} onClick={() => setView('map')}>
+                <MapIcon size={11} /> 地図のみ
+              </button>
+            </div>
+          </ToolbarGroup>
+
+          <ToolbarGroup label="単位">
+            <div className="seg" style={{ fontSize: 11 }}>
+              <button
+                className={groupBy === 'building' ? 'active' : ''}
+                onClick={() => setGroupBy('building')}
+                title="同じ建物の事業所をまとめて送迎組"
+              >
+                <Building2 size={11} /> 建物
+              </button>
+              <button
+                className={groupBy === 'facility' ? 'active' : ''}
+                onClick={() => setGroupBy('facility')}
+                title="事業所ごとに送迎組"
+              >
+                <Home size={11} /> 事業所
+              </button>
+            </div>
+          </ToolbarGroup>
+
+          <ToolbarGroup label="方面">
+            <div className="seg" style={{ fontSize: 11 }}>
+              <button className={regionFilter === 'all' ? 'active' : ''} onClick={() => setRegionFilter('all')}>
+                全て
+              </button>
+              {REGIONS.map(r => (
+                <button
+                  key={r.id}
+                  className={regionFilter === r.id ? 'active' : ''}
+                  onClick={() => setRegionFilter(r.id)}
+                  style={regionFilter === r.id ? { color: r.color, borderColor: r.color } : {}}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: 1, background: r.color, display: 'inline-block', marginRight: 4 }} />
+                  {r.name}
+                </button>
+              ))}
+            </div>
+          </ToolbarGroup>
 
           <div style={{ flex: 1 }} />
 
-          {/* 出所バッジ */}
+          {/* 出所バッジ（1段目の右端） */}
           {appliedSource && (
             <div
               className="pill"
@@ -1040,8 +1190,15 @@ function Step3({
               )}
             </div>
           )}
+        </div>
 
-          {/* 別の過去組を読み込む */}
+        {/* ─ 2段目: 編集・履歴・確定 ─ */}
+        <div style={{
+          padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          flexWrap: 'wrap',
+        }}>
+          {/* 左: データ操作 */}
           {onOpenPastModal && (
             <button
               className="btn btn-ghost btn-sm"
@@ -1051,19 +1208,47 @@ function Step3({
               <History size={11} /> 過去組を差替え
             </button>
           )}
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setVehicleStatusModalOpen(true)}
+            title="本日の車両状態を編集（整備中・代車使用・休車）"
+          >
+            <Wrench size={11} />
+            車両状態
+            {Object.values(vehicleStatus).some(s => s.status !== 'active') && (
+              <span style={{
+                marginLeft: 4,
+                background: 'var(--amber)',
+                color: '#fff',
+                borderRadius: 999,
+                padding: '1px 6px',
+                fontSize: 9,
+                fontWeight: 800,
+                fontFamily: 'var(--font-mono)',
+              }}>
+                {Object.values(vehicleStatus).filter(s => s.status !== 'active').length}
+              </span>
+            )}
+          </button>
 
-          {/* Undo/Redo */}
-          <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title={canUndo ? `元に戻す: ${history[historyIndex]?._action || ''}` : ''}>
-            <Undo2 size={12} /> 元に戻す
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={redo} disabled={!canRedo}>
-            <Redo2 size={12} /> やり直す
-          </button>
-          <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>
-            変更 <span className="num" style={{ color: changeCount > 0 ? 'var(--accent)' : 'inherit', fontWeight: 700 }}>{changeCount}</span> 件
+          <div style={{ flex: 1 }} />
+
+          {/* 右: 履歴 & 確定 */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            paddingRight: 8,
+            borderRight: '1px solid var(--line)',
+          }}>
+            <button className="btn btn-ghost btn-sm" onClick={undo} disabled={!canUndo} title={canUndo ? `元に戻す: ${history[historyIndex]?._action || ''}` : ''}>
+              <Undo2 size={12} /> 元に戻す
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={redo} disabled={!canRedo}>
+              <Redo2 size={12} /> やり直す
+            </button>
+            <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+              変更 <span className="num" style={{ color: changeCount > 0 ? 'var(--accent)' : 'inherit', fontWeight: 700 }}>{changeCount}</span> 件
+            </div>
           </div>
-
-          <div style={{ width: 1, height: 24, background: 'var(--line)' }} />
 
           <button className="btn btn-sage" onClick={() => setStep(4)} style={{ fontSize: 12 }}>
             <CheckCircle2 size={13} /> この組み方で確定
@@ -1121,6 +1306,11 @@ function Step3({
             draggedChild={draggedChild} setDraggedChild={setDraggedChild}
             moveChild={moveChild}
             addTrip={addTrip} removeTrip={removeTrip} changeVehicle={changeVehicle}
+            groupBy={groupBy}
+            vehicleStatus={vehicleStatus}
+            childDayStatus={childDayStatus}
+            onEditChild={(cid) => setChildEditModal({ childId: cid })}
+            onEditVehicle={(vid) => setVehicleQuickEdit({ vehicleId: vid })}
           />
         )}
 
@@ -1138,6 +1328,37 @@ function Step3({
           moveChild={moveChild}
         />
       </div>
+
+      {/* 車両状態編集モーダル（全台一覧） */}
+      {vehicleStatusModalOpen && (
+        <VehicleStatusModal
+          vehicleStatus={vehicleStatus}
+          setVehicleStatus={setVehicleStatus}
+          assignments={assignments}
+          onClose={() => setVehicleStatusModalOpen(false)}
+        />
+      )}
+
+      {/* 車両クイック編集（1台分、カード内の車から開く） */}
+      {vehicleQuickEdit && (
+        <VehicleQuickEditModal
+          vehicleId={vehicleQuickEdit.vehicleId}
+          vehicleStatus={vehicleStatus}
+          setVehicleStatus={setVehicleStatus}
+          assignments={assignments}
+          onClose={() => setVehicleQuickEdit(null)}
+        />
+      )}
+
+      {/* 児童 当日状態 編集モーダル */}
+      {childEditModal && (
+        <ChildDayStatusModal
+          childId={childEditModal.childId}
+          childDayStatus={childDayStatus}
+          setChildDayStatus={setChildDayStatus}
+          onClose={() => setChildEditModal(null)}
+        />
+      )}
     </div>
   )
 }
@@ -1149,13 +1370,80 @@ function MatrixView({
   highlightChildId, setHighlightChildId,
   draggedChild, setDraggedChild,
   moveChild, addTrip, removeTrip, changeVehicle,
+  groupBy = 'building',
+  vehicleStatus,
+  childDayStatus, onEditChild, onEditVehicle,
 }) {
-  // 方面でフィルタ（全便含むブロックは表示、フィルタに該当する便のみ強調）
-  const visibleBlocks = assignments.facilityBlocks.map((block, bIdx) => ({
-    block, bIdx,
-    visibleTrips: block.trips
-      .map((trip, tIdx) => ({ trip, tIdx }))
-      .filter(({ trip }) => regionFilter === 'all' || trip.region === regionFilter),
+  // 事業所単位の元データを、groupBy に応じて「表示用ブロック」に変換
+  // facility: 既存どおり 1 ブロック = 1 事業所
+  // building: 同じ建物の事業所ブロックをまとめて 1 ブロック扱い
+  //           ただし元の bIdx/tIdx インデックスは壊さず、trip 単位で束ねる
+  const displayBlocks = useMemo(() => {
+    const blocks = assignments?.facilityBlocks || []
+    if (groupBy === 'facility') {
+      return blocks.map((block, bIdx) => {
+        const fac = FACILITY_BY_ID[block?.facility]
+        return {
+          kind: 'facility',
+          key: `fac-${bIdx}`,
+          facility: fac,
+          building: buildingOf(block?.facility),
+          // facilities 配列は building モードで読むが、保険として facility モードでも入れておく
+          facilities: fac ? [fac.id] : [],
+          leadTeachers: block?.leadTeacher ? [block.leadTeacher] : [],
+          trips: (block?.trips || []).map((trip, tIdx) => ({
+            trip, bIdx, tIdx, sourceFacility: block?.facility,
+          })),
+        }
+      })
+    }
+    // ─── building モード ───
+    // 建物ごとに、含まれる事業所のすべての trip を平ら化して束ねる
+    // 建物マスタに載っていない事業所は "その他" グループに寄せる（落ちないように）
+    const byBuilding = new Map()
+    blocks.forEach((block, bIdx) => {
+      const bld = buildingOf(block?.facility)
+      const bldKey = bld?.id || '__other__'
+      if (!byBuilding.has(bldKey)) {
+        byBuilding.set(bldKey, {
+          kind: 'building',
+          key: `bld-${bldKey}`,
+          building: bld || {
+            id: '__other__',
+            name: '（建物未設定）',
+            color: '#7e828f',
+            address: '',
+          },
+          facilities: new Set(),
+          leadTeachers: new Set(),
+          trips: [],
+        })
+      }
+      const entry = byBuilding.get(bldKey)
+      if (block?.facility) entry.facilities.add(block.facility)
+      if (block?.leadTeacher) entry.leadTeachers.add(block.leadTeacher)
+      ;(block?.trips || []).forEach((trip, tIdx) => {
+        entry.trips.push({ trip, bIdx, tIdx, sourceFacility: block?.facility })
+      })
+    })
+    // 建物マスタ順で出力。マスタにない "__other__" は末尾
+    const ordered = BUILDINGS
+      .filter(b => byBuilding.has(b.id))
+      .map(b => byBuilding.get(b.id))
+    if (byBuilding.has('__other__')) ordered.push(byBuilding.get('__other__'))
+    return ordered.map(e => ({
+      ...e,
+      facilities: [...e.facilities],
+      leadTeachers: [...e.leadTeachers],
+    }))
+  }, [assignments?.facilityBlocks, groupBy])
+
+  // 方面フィルタ適用
+  const visibleBlocks = displayBlocks.map(block => ({
+    block,
+    visibleTrips: block.trips.filter(({ trip }) =>
+      regionFilter === 'all' || trip.region === regionFilter,
+    ),
   })).filter(({ visibleTrips }) => visibleTrips.length > 0)
 
   return (
@@ -1164,7 +1452,7 @@ function MatrixView({
         <div>
           <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Grid3x3 size={14} color="var(--accent)" />
-            配車組表（送迎組.xlsx準拠）
+            配車組表（{groupBy === 'building' ? '建物' : '事業所'}単位）
           </div>
           <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 2 }}>
             児童カードを<b>ドラッグ</b>して車両間移動 / 便追加・削除・車両変更可能
@@ -1173,16 +1461,21 @@ function MatrixView({
       </div>
 
       <div style={{ padding: 14, background: 'var(--bg-deep)', maxHeight: 720, overflowY: 'auto' }}>
-        {visibleBlocks.map(({ block, bIdx, visibleTrips }) => (
+        {visibleBlocks.map(({ block, visibleTrips }) => (
           <FacilityBlock
-            key={bIdx}
-            block={block} bIdx={bIdx} visibleTrips={visibleTrips}
+            key={block.key}
+            groupBlock={block}
+            visibleTrips={visibleTrips}
             selectedTripKey={selectedTripKey} setSelectedTripKey={setSelectedTripKey}
             highlightChildId={highlightChildId} setHighlightChildId={setHighlightChildId}
             draggedChild={draggedChild} setDraggedChild={setDraggedChild}
             moveChild={moveChild}
             addTrip={addTrip} removeTrip={removeTrip} changeVehicle={changeVehicle}
             violations={violations}
+            vehicleStatus={vehicleStatus}
+            childDayStatus={childDayStatus}
+            onEditChild={onEditChild}
+            onEditVehicle={onEditVehicle}
           />
         ))}
 
@@ -1199,15 +1492,37 @@ function MatrixView({
 }
 
 function FacilityBlock({
-  block, bIdx, visibleTrips,
+  groupBlock, visibleTrips,
   selectedTripKey, setSelectedTripKey,
   highlightChildId, setHighlightChildId,
   draggedChild, setDraggedChild,
   moveChild, addTrip, removeTrip, changeVehicle,
   violations,
+  vehicleStatus,
+  childDayStatus, onEditChild, onEditVehicle,
 }) {
-  const fac = FACILITY_BY_ID[block.facility]
-  const totalChildren = block.trips.reduce((s, t) => s + t.childIds.length, 0)
+  const isBuilding = groupBlock?.kind === 'building'
+  // ヘッダー用のメタデータ（hex color 前提。nullのときは fallback グレー #7e828f を使う）
+  const headerColorHex = (isBuilding
+    ? groupBlock?.building?.color
+    : groupBlock?.facility?.color) || '#7e828f'
+  const headerTitle = (isBuilding
+    ? groupBlock?.building?.name
+    : groupBlock?.facility?.name) || '（未設定）'
+  const headerSub = isBuilding
+    ? (groupBlock?.building?.address || '')
+    : ''
+  const facilitiesList = Array.isArray(groupBlock?.facilities) ? groupBlock.facilities : []
+  const leadTeachers = Array.isArray(groupBlock?.leadTeachers) ? groupBlock.leadTeachers : []
+  const leadTeachersText = leadTeachers.length ? leadTeachers.join(' / ') : '-'
+  const tripsAll = Array.isArray(groupBlock?.trips) ? groupBlock.trips : []
+  const addTargetBIdx = tripsAll[0]?.bIdx ?? 0
+
+  // 合計乗車人数
+  const totalChildren = tripsAll.reduce(
+    (s, item) => s + (item?.trip?.childIds?.length || 0),
+    0,
+  )
 
   return (
     <div style={{
@@ -1219,24 +1534,70 @@ function FacilityBlock({
     }}>
       {/* 拠点ヘッダー */}
       <div style={{
-        padding: '10px 14px',
-        background: fac?.color + '10',
-        borderBottom: `1px solid ${fac?.color}30`,
+        padding: '12px 14px',
+        background: headerColorHex + '10',
+        borderBottom: `1px solid ${headerColorHex}30`,
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
-        <span style={{ width: 10, height: 10, borderRadius: 2, background: fac?.color }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700, color: fac?.color }}>
-            {fac?.name}
+        {isBuilding ? (
+          <Building2 size={14} color={headerColorHex} style={{ flexShrink: 0 }} />
+        ) : (
+          <span style={{ width: 10, height: 10, borderRadius: 2, background: headerColorHex, flexShrink: 0 }} />
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: 'var(--font-display)',
+            fontSize: 14, fontWeight: 700,
+            color: headerColorHex,
+            display: 'flex', alignItems: 'center', gap: 8,
+            flexWrap: 'wrap',
+          }}>
+            <span>{headerTitle}</span>
+            {isBuilding && facilitiesList.length > 0 && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {facilitiesList.map(fid => {
+                  const f = FACILITY_BY_ID[fid]
+                  if (!f) return null
+                  return (
+                    <span key={fid} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontSize: 10, fontWeight: 700,
+                      background: f.color + '18',
+                      color: f.color,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      fontFamily: 'var(--font-display)',
+                      letterSpacing: '0.02em',
+                    }}>
+                      <span style={{
+                        width: 6, height: 6, borderRadius: '50%',
+                        background: f.color,
+                      }} />
+                      {f.short}
+                      <span style={{
+                        fontSize: 8, color: f.color, opacity: 0.7,
+                        fontWeight: 600,
+                      }}>
+                        {f.service}
+                      </span>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--ink-muted)' }}>
-            担当: {block.leadTeacher} · {block.trips.length}便 · <span className="num">{totalChildren}</span>名乗車
+          <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 2 }}>
+            {isBuilding && headerSub && <>📍 {headerSub} · </>}
+            担当: {leadTeachersText} · {tripsAll.length}便 · <span className="num">{totalChildren}</span>名乗車
           </div>
         </div>
         <button
           className="btn btn-ghost btn-sm"
-          onClick={() => addTrip(bIdx)}
-          title="便を追加"
+          onClick={() => addTrip(addTargetBIdx)}
+          title={isBuilding && facilitiesList.length > 0
+            ? `便を追加（${FACILITY_BY_ID[facilitiesList[0]]?.short || ''}配下）`
+            : '便を追加'
+          }
         >
           <Plus size={11} /> 便追加
         </button>
@@ -1249,19 +1610,27 @@ function FacilityBlock({
         gap: 1,
         background: 'var(--line)',
       }}>
-        {visibleTrips.map(({ trip, tIdx }) => {
+        {visibleTrips.map(({ trip, bIdx, tIdx, sourceFacility }) => {
           const key = `${bIdx}:${tIdx}`
           const isSelected = selectedTripKey === key
           const v = VEHICLE_BY_ID[trip.vehicle]
+          const vStatus = vehicleStatus?.[trip.vehicle]
           const tripViolations = violations.filter(vi => vi.tripKey === key)
           const overCapacity = trip.childIds.length > (v?.capacity || 0)
           const region = REGIONS.find(r => r.id === trip.region)
+          // 建物モードだけ、各 trip がどの事業所に属するかをカラム内に表示する
+          const tripFacility = isBuilding
+            ? FACILITY_BY_ID[sourceFacility]
+            : null
 
           return (
             <TripColumn
               key={key}
               tripKey={key} trip={trip} tIdx={tIdx} bIdx={bIdx}
               vehicle={v} region={region}
+              vehicleStatusEntry={vStatus}
+              vehicleStatus={vehicleStatus}
+              tripFacility={tripFacility}
               isSelected={isSelected}
               onSelect={() => setSelectedTripKey(isSelected ? null : key)}
               violations={tripViolations}
@@ -1273,6 +1642,9 @@ function FacilityBlock({
               moveChild={moveChild}
               removeTrip={() => removeTrip(bIdx, tIdx)}
               changeVehicle={(vid) => changeVehicle(bIdx, tIdx, vid)}
+              childDayStatus={childDayStatus}
+              onEditChild={onEditChild}
+              onEditVehicle={onEditVehicle}
             />
           )
         })}
@@ -1283,12 +1655,16 @@ function FacilityBlock({
 
 function TripColumn({
   tripKey, trip, tIdx, bIdx, vehicle, region,
+  vehicleStatusEntry, vehicleStatus, tripFacility,
   isSelected, onSelect, violations, overCapacity,
   highlightChildId, setHighlightChildId,
   onDragStart, draggedChild, moveChild,
   removeTrip, changeVehicle,
+  childDayStatus, onEditChild, onEditVehicle,
 }) {
   const [dragOver, setDragOver] = useState(false)
+  const dayStatus = vehicleStatusEntry ? DAY_STATUS_BY_ID[vehicleStatusEntry.status] : null
+  const vehicleUnavailable = vehicleStatusEntry && !canUseVehicle(vehicleStatusEntry)
 
   const handleDrop = (e) => {
     e.preventDefault()
@@ -1316,11 +1692,33 @@ function TripColumn({
         onClick={onSelect}
         style={{
           padding: '10px 12px',
-          background: overCapacity ? 'var(--amber-soft)' : isSelected ? 'var(--accent-faint)' : 'var(--bg)',
+          background: overCapacity ? 'var(--amber-soft)'
+                      : vehicleUnavailable ? 'var(--danger-soft)'
+                      : isSelected ? 'var(--accent-faint)' : 'var(--bg)',
           borderBottom: '1px solid var(--line)',
           cursor: 'pointer',
         }}
       >
+        {/* 建物モード時のみ、どの事業所の便かを示す薄バッジ */}
+        {tripFacility && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginBottom: 6,
+            padding: '3px 8px',
+            borderRadius: 999,
+            background: tripFacility.color + '12',
+            fontSize: 9.5, fontWeight: 700,
+            color: tripFacility.color,
+            fontFamily: 'var(--font-display)',
+            letterSpacing: '0.02em',
+            width: 'fit-content',
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: tripFacility.color }} />
+            {tripFacility.short}
+            <span style={{ opacity: 0.7, fontWeight: 600, fontSize: 9 }}>{tripFacility.service}</span>
+          </div>
+        )}
+
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <div style={{
             fontFamily: 'var(--font-display)',
@@ -1347,24 +1745,79 @@ function TripColumn({
           </div>
         </div>
 
-        {/* 車両選択 */}
-        <div onClick={e => e.stopPropagation()}>
+        {/* 車両選択 + 状態編集ボタン */}
+        <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4 }}>
           <select
             value={trip.vehicle}
             onChange={(e) => changeVehicle(e.target.value)}
             style={{
-              width: '100%', fontSize: 11, padding: '4px 6px',
-              background: vehicle?.color + '15', border: `1px solid ${vehicle?.color}60`,
-              borderRadius: 4, color: 'var(--ink)', fontWeight: 600,
+              flex: 1, minWidth: 0,
+              fontSize: 11, padding: '4px 6px',
+              background: vehicleUnavailable
+                ? 'var(--danger-soft)'
+                : vehicle?.color + '15',
+              border: `1px solid ${vehicleUnavailable ? 'var(--danger)' : vehicle?.color + '60'}`,
+              borderRadius: 4,
+              color: vehicleUnavailable ? 'var(--danger)' : 'var(--ink)',
+              fontWeight: 600,
             }}
           >
-            {VEHICLES.map(v => (
-              <option key={v.id} value={v.id}>
-                {v.name}（定員{v.capacity}）
-              </option>
-            ))}
+            {VEHICLES.map(v => {
+              const s = vehicleStatus?.[v.id]
+              const st = s ? DAY_STATUS_BY_ID[s.status] : null
+              const unavailable = s && !canUseVehicle(s)
+              return (
+                <option key={v.id} value={v.id} disabled={unavailable && v.id !== trip.vehicle}>
+                  {unavailable ? '⚠ ' : ''}{v.name}（定員{v.capacity}）{st && st.id !== 'active' ? ` - ${st.short}` : ''}
+                </option>
+              )
+            })}
           </select>
+          <button
+            onClick={() => onEditVehicle?.(trip.vehicle)}
+            title={`この車両の当日状態を編集（${vehicle?.name || ''}）`}
+            style={{
+              flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 26,
+              padding: 0,
+              border: `1px solid ${vehicleUnavailable ? 'var(--danger)' : 'var(--line-strong)'}`,
+              borderRadius: 4,
+              background: vehicleUnavailable ? 'var(--danger-soft)' : 'var(--surface)',
+              color: vehicleUnavailable ? 'var(--danger)' : 'var(--ink-soft)',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-faint)'; e.currentTarget.style.color = 'var(--accent)' }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = vehicleUnavailable ? 'var(--danger-soft)' : 'var(--surface)'
+              e.currentTarget.style.color = vehicleUnavailable ? 'var(--danger)' : 'var(--ink-soft)'
+            }}
+          >
+            <Wrench size={11} />
+          </button>
         </div>
+
+        {/* 当日ステータスバッジ（稼働中以外のみ表示） */}
+        {dayStatus && dayStatus.id !== 'active' && (
+          <div style={{
+            marginTop: 5,
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '3px 8px',
+            background: dayStatus.color + '1f',
+            border: `1px solid ${dayStatus.color}55`,
+            borderRadius: 4,
+            fontSize: 10, fontWeight: 700,
+            color: dayStatus.color,
+          }}>
+            <Wrench size={10} />
+            <span>{dayStatus.label}</span>
+            {vehicleStatusEntry?.note && (
+              <span style={{ fontWeight: 500, opacity: 0.85, fontSize: 9.5 }}>
+                · {vehicleStatusEntry.note}
+              </span>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontSize: 10, color: 'var(--ink-muted)' }}>
           <span>{trip.teacher}</span>
@@ -1397,6 +1850,7 @@ function TripColumn({
           if (!child) return null
           const loc = LOC_BY_ID[child.pickupLoc] || LOC_BY_ID[child.school]
           const hasNgViolation = violations.some(v => v.type === 'ng' && v.tripKey === tripKey && v.childIds?.includes(cid))
+          const dayEntry = childDayStatus?.[cid]
 
           return (
             <ChildCard
@@ -1405,10 +1859,12 @@ function TripColumn({
               loc={loc}
               highlighted={highlightChildId === cid}
               hasViolation={hasNgViolation}
+              dayEntry={dayEntry}
               onMouseEnter={() => setHighlightChildId(cid)}
               onMouseLeave={() => setHighlightChildId(null)}
               onDragStart={() => onDragStart({ childId: cid, from: tripKey })}
               onDragEnd={() => onDragStart(null)}
+              onClick={() => onEditChild?.(cid)}
             />
           )
         })}
@@ -1428,7 +1884,47 @@ function TripColumn({
   )
 }
 
-function ChildCard({ child, loc, highlighted, hasViolation, onMouseEnter, onMouseLeave, onDragStart, onDragEnd }) {
+// ─── 児童カードの当日ステータス定義 ───
+// transport=送迎する、absent=欠席で拠点にも行かない、leave_early=途中帰宅
+// その他(present/late など)は present として扱い、特記事項メモだけ付けられる
+const CHILD_DAY_STATUSES = [
+  { id: 'present',     label: '通常',     color: '#6fa373', short: '通常' },
+  { id: 'absent',      label: '欠席',     color: '#c94a3b', short: '欠席' },
+  { id: 'leave_early', label: '早退',     color: '#d9992b', short: '早退' },
+  { id: 'late',        label: '遅参',     color: '#3d7eac', short: '遅' },
+  { id: 'note_only',   label: '申し送り', color: '#9a7cbb', short: 'メモ' },
+]
+const CHILD_DAY_STATUS_BY_ID = Object.fromEntries(CHILD_DAY_STATUSES.map(s => [s.id, s]))
+
+function ChildCard({
+  child, loc, highlighted, hasViolation,
+  dayEntry,
+  onMouseEnter, onMouseLeave,
+  onDragStart, onDragEnd, onClick,
+}) {
+  const ds = dayEntry ? CHILD_DAY_STATUS_BY_ID[dayEntry.status] : null
+  const isAbsent = dayEntry?.status === 'absent'
+  const hasNote  = !!dayEntry?.note
+  // 視覚優先度: 違反 > 欠席 > ハイライト > dayステータス > 通常
+  const borderColor = hasViolation
+    ? 'var(--amber)'
+    : isAbsent
+      ? 'var(--danger)'
+      : highlighted
+        ? 'var(--accent)'
+        : ds
+          ? ds.color
+          : 'var(--line)'
+  const bgColor = hasViolation
+    ? 'var(--amber-soft)'
+    : isAbsent
+      ? 'var(--danger-soft)'
+      : highlighted
+        ? 'var(--accent-faint)'
+        : ds
+          ? `${ds.color}14`
+          : '#fff'
+
   return (
     <div
       draggable
@@ -1436,27 +1932,58 @@ function ChildCard({ child, loc, highlighted, hasViolation, onMouseEnter, onMous
       onDragEnd={onDragEnd}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onClick={onClick}
+      title="クリックで当日の状態を編集"
       style={{
         padding: '7px 9px',
-        background: hasViolation ? 'var(--amber-soft)' : highlighted ? 'var(--accent-faint)' : '#fff',
-        border: hasViolation ? '1px solid var(--amber)' : highlighted ? '1px solid var(--accent)' : '1px solid var(--line)',
+        background: bgColor,
+        border: `1px solid ${borderColor}`,
         borderRadius: 6,
-        cursor: 'grab',
+        cursor: 'pointer',
         display: 'flex', alignItems: 'center', gap: 7,
         transition: 'all 0.1s',
         fontSize: 11.5,
+        opacity: isAbsent ? 0.75 : 1,
       }}
     >
       <GripVertical size={11} color="var(--ink-muted)" style={{ flexShrink: 0, opacity: 0.6 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div style={{
+          fontWeight: 600,
+          color: 'var(--ink)',
+          display: 'flex', alignItems: 'center', gap: 4,
+          flexWrap: 'wrap',
+          textDecoration: isAbsent ? 'line-through' : 'none',
+        }}>
           {child.name}
           {child.tag && <span className="pill pill-accent" style={{ fontSize: 8, padding: '0 4px' }}>{child.tag}</span>}
           {hasViolation && <AlertCircle size={10} color="var(--amber)" />}
+          {ds && (
+            <span style={{
+              fontSize: 8.5, fontWeight: 800,
+              color: '#fff', background: ds.color,
+              padding: '1px 5px', borderRadius: 3,
+              letterSpacing: '0.04em',
+            }}>
+              {ds.short}
+            </span>
+          )}
         </div>
         <div style={{ fontSize: 9.5, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>
           {child.grade} · {loc?.name || '—'} · {loc?.time || '—'}
         </div>
+        {hasNote && (
+          <div style={{
+            marginTop: 3,
+            padding: '2px 6px',
+            borderLeft: `2px solid ${ds?.color || 'var(--ink-faint)'}`,
+            fontSize: 10, color: 'var(--ink-soft)',
+            fontWeight: 500, lineHeight: 1.35,
+            background: `${ds?.color || 'var(--ink-faint)'}10`,
+          }}>
+            {dayEntry.note}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1555,7 +2082,7 @@ function UnassignedTab({ unassignedIds, highlightChildId, setHighlightChildId, o
     )
   }
 
-  // 学校ごとにグルーピング（松浦モデル）
+  // 学校ごとにグルーピング
   const byLoc = {}
   unassignedIds.forEach(id => {
     const c = CHILD_BY_ID[id]
@@ -1728,7 +2255,7 @@ function MapViewPanel({ assignments, highlightChildId }) {
     <div className="panel" style={{ padding: 0 }}>
       <div className="panel-header">
         <div className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Map size={13} color="var(--accent)" />
+          <MapIcon size={13} color="var(--accent)" />
           地図プレビュー
         </div>
         <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
@@ -2362,6 +2889,686 @@ function PastAssignmentPreview({ past, currentDow }) {
           {past.unassignedChildIds.map(cid => CHILD_BY_ID[cid]?.name || cid).join('、')}
         </div>
       )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 車両 当日ステータス編集モーダル
+// ═══════════════════════════════════════════════════════════════
+// 当日の各車両のステータス（稼働/整備/代車/休車）とメモを編集する。
+// 既に使用中の便に割り当たっている車両を「使用不可」にした場合、
+// モーダル下部に警告を出す（実際の切替はユーザー判断に委ねる = 自動で別車両にはしない）。
+function VehicleStatusModal({ vehicleStatus, setVehicleStatus, assignments, onClose }) {
+  // 各車両が何便に使われているかを集計
+  const vehicleUsage = useMemo(() => {
+    const usage = {}
+    assignments?.facilityBlocks?.forEach(block => {
+      block.trips.forEach(trip => {
+        if (!usage[trip.vehicle]) usage[trip.vehicle] = []
+        usage[trip.vehicle].push({
+          facilityShort: FACILITY_BY_ID[block.facility]?.short || block.facility,
+          tripNo: trip.tripNo,
+          childCount: trip.childIds.length,
+        })
+      })
+    })
+    return usage
+  }, [assignments])
+
+  const updateStatus = (vehicleId, field, value) => {
+    setVehicleStatus(prev => ({
+      ...prev,
+      [vehicleId]: { ...prev[vehicleId], [field]: value },
+    }))
+  }
+
+  // Esc で閉じる
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // 使用中なのに停止にされている車両を警告対象に
+  const conflicts = VEHICLES.filter(v => {
+    const s = vehicleStatus[v.id]
+    return s && !canUseVehicle(s) && (vehicleUsage[v.id]?.length > 0)
+  })
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(28, 30, 38, 0.55)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, animation: 'fadeIn 0.18s ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: 'min(960px, 96vw)',
+          maxHeight: '92vh',
+          display: 'flex', flexDirection: 'column',
+          boxShadow: 'var(--shadow-lg)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* ヘッダ */}
+        <div style={{
+          padding: '16px 22px', borderBottom: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 14,
+          background: 'var(--surface-soft)',
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 8,
+            background: 'var(--amber-soft)', color: 'var(--amber)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Wrench size={16} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>
+              本日の車両状態
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+              各車両の当日ステータスとメモを編集。整備中・休車の車両は配車組で警告されます。
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="btn btn-ghost btn-sm"
+            aria-label="閉じる"
+          >
+            <X size={13} />
+          </button>
+        </div>
+
+        {/* 凡例 */}
+        <div style={{ padding: '10px 22px', borderBottom: '1px solid var(--line)', background: 'var(--bg)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          {DAY_STATUSES.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <span style={{
+                width: 9, height: 9, borderRadius: '50%',
+                background: s.color, border: '1.5px solid #fff',
+                boxShadow: `0 0 0 1px ${s.color}`,
+              }} />
+              <span style={{ fontWeight: 700, color: s.color }}>{s.label}</span>
+              <span style={{ color: 'var(--ink-muted)' }}>— {s.desc}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Conflicts warning */}
+        {conflicts.length > 0 && (
+          <div style={{
+            padding: '10px 22px', borderBottom: '1px solid var(--line)',
+            background: 'var(--danger-soft)',
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+          }}>
+            <AlertTriangle size={13} color="var(--danger)" />
+            <span style={{ fontWeight: 700, color: 'var(--danger)' }}>
+              配車済み車両 {conflicts.length}台 が使用不可
+            </span>
+            <span style={{ color: 'var(--ink-soft)' }}>
+              {conflicts.map(v => v.name).join('、')}
+              を使用している便があります。配車組表で別車両に切り替えてください。
+            </span>
+          </div>
+        )}
+
+        {/* 車両リスト */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 14px 20px' }}>
+          <table style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ width: 36 }}></th>
+                <th>車両</th>
+                <th style={{ width: 90 }}>定員</th>
+                <th style={{ width: 90 }}>使用便数</th>
+                <th style={{ width: 200 }}>当日ステータス</th>
+                <th>メモ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {VEHICLES.map(v => {
+                const entry = vehicleStatus[v.id] || { status: 'active', note: '' }
+                const status = DAY_STATUS_BY_ID[entry.status] || DAY_STATUSES[0]
+                const usage = vehicleUsage[v.id] || []
+                const isUnavailable = !canUseVehicle(entry)
+                const isConflict = isUnavailable && usage.length > 0
+                return (
+                  <tr key={v.id} style={{
+                    background: isConflict ? 'var(--danger-soft)' : 'transparent',
+                  }}>
+                    <td>
+                      <span style={{
+                        display: 'inline-block',
+                        width: 10, height: 10, borderRadius: 3,
+                        background: v.color,
+                      }} />
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 700, fontSize: 12.5 }}>{v.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--ink-muted)', fontFamily: 'var(--font-mono)' }}>
+                        {v.plate}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--ink-muted)', marginTop: 2 }}>
+                        運転: {v.driver}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="num" style={{ fontWeight: 700 }}>{v.capacity}</span>
+                      <span style={{ fontSize: 10, color: 'var(--ink-muted)' }}> 名</span>
+                    </td>
+                    <td>
+                      {usage.length === 0 ? (
+                        <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>—</span>
+                      ) : (
+                        <div>
+                          <span className="num" style={{
+                            fontWeight: 700,
+                            color: isConflict ? 'var(--danger)' : 'var(--accent)',
+                          }}>
+                            {usage.length}
+                          </span>
+                          <span style={{ fontSize: 10, color: 'var(--ink-muted)' }}> 便</span>
+                          <div style={{ fontSize: 9.5, color: 'var(--ink-muted)', marginTop: 2 }}>
+                            {usage.map(u => `${u.facilityShort}#${u.tripNo}`).join(' · ')}
+                          </div>
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <select
+                        value={entry.status}
+                        onChange={e => updateStatus(v.id, 'status', e.target.value)}
+                        style={{
+                          width: '100%', fontSize: 12, padding: '6px 10px',
+                          fontWeight: 700,
+                          background: status.color + '18',
+                          color: status.color,
+                          border: `1.5px solid ${status.color}55`,
+                          borderRadius: 8,
+                        }}
+                      >
+                        {DAY_STATUSES.map(s => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={entry.note || ''}
+                        onChange={e => updateStatus(v.id, 'note', e.target.value)}
+                        placeholder={
+                          entry.status === 'maintenance' ? '例: 定期点検（15:00再始動予定）'
+                          : entry.status === 'substitute' ? '例: 代車レンタルA'
+                          : entry.status === 'off'        ? '例: ドライバー休暇'
+                          : '（任意）'
+                        }
+                        style={{ width: '100%', fontSize: 12 }}
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* フッタ */}
+        <div style={{
+          padding: '12px 22px', borderTop: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--surface-soft)',
+        }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-muted)', flex: 1 }}>
+            変更は即時反映されます。送迎確定後も編集可能。
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={onClose}>
+            <CheckCircle2 size={12} /> 完了
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 児童 当日状態 編集モーダル（児童カードをクリックで開く）
+// ═══════════════════════════════════════════════════════════════
+function ChildDayStatusModal({ childId, childDayStatus, setChildDayStatus, onClose }) {
+  const child = CHILD_BY_ID[childId]
+  const current = childDayStatus[childId] || { status: 'present', note: '' }
+  const [status, setStatus] = useState(current.status)
+  const [note, setNote] = useState(current.note || '')
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const save = () => {
+    setChildDayStatus(prev => {
+      const next = { ...prev }
+      // 通常+メモ空なら削除
+      if (status === 'present' && !note.trim()) {
+        delete next[childId]
+      } else {
+        next[childId] = { status, note: note.trim() }
+      }
+      return next
+    })
+    onClose()
+  }
+  const clear = () => {
+    setChildDayStatus(prev => {
+      const next = { ...prev }
+      delete next[childId]
+      return next
+    })
+    onClose()
+  }
+
+  if (!child) return null
+
+  const loc = LOC_BY_ID[child.pickupLoc] || LOC_BY_ID[child.school]
+  const facility = FACILITY_BY_ID[child.facility]
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(28, 30, 38, 0.55)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, animation: 'fadeIn 0.18s ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: 'min(520px, 96vw)',
+          maxHeight: '90vh',
+          display: 'flex', flexDirection: 'column',
+          boxShadow: 'var(--shadow-lg)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* ヘッダ */}
+        <div style={{
+          padding: '16px 22px', borderBottom: '1px solid var(--line)',
+          background: 'var(--surface-soft)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10,
+            background: `linear-gradient(135deg,var(--rb-orange),var(--rb-pink))`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontWeight: 800, fontSize: 14,
+            fontFamily: 'var(--font-display)',
+          }}>
+            {child.name?.[0] || '児'}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>
+              {child.name}
+              <span style={{ fontSize: 10.5, color: 'var(--ink-muted)', fontWeight: 500, marginLeft: 8 }}>
+                {child.grade}
+              </span>
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 2 }}>
+              {facility?.short} · {loc?.name || '—'} · 下校 {loc?.time || '—'}
+            </div>
+          </div>
+          <button onClick={onClose} className="btn btn-ghost btn-sm" aria-label="閉じる">
+            <X size={13} />
+          </button>
+        </div>
+
+        {/* コンテンツ */}
+        <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* ステータス選択 */}
+          <div>
+            <div style={{
+              fontSize: 10.5, fontWeight: 700, color: 'var(--ink-muted)',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              marginBottom: 8,
+            }}>
+              本日の状態
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+              {CHILD_DAY_STATUSES.map(s => {
+                const active = status === s.id
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setStatus(s.id)}
+                    style={{
+                      padding: '10px 4px',
+                      borderRadius: 8,
+                      border: `1.5px solid ${active ? s.color : 'var(--line)'}`,
+                      background: active ? `${s.color}18` : 'var(--surface)',
+                      color: active ? s.color : 'var(--ink-soft)',
+                      fontWeight: active ? 800 : 600,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      transition: 'all 0.1s',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', gap: 4,
+                    }}
+                  >
+                    <span style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: s.color,
+                      boxShadow: active ? `0 0 0 3px ${s.color}30` : 'none',
+                    }} />
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* メモ */}
+          <div>
+            <div style={{
+              fontSize: 10.5, fontWeight: 700, color: 'var(--ink-muted)',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              marginBottom: 8,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              申し送り・メモ
+              <span style={{ color: 'var(--ink-faint)', fontSize: 9.5, fontWeight: 500, letterSpacing: 0, textTransform: 'none' }}>
+                （例: 「親の迎え予定」「薬の確認」「本日は別の事業所へ」など）
+              </span>
+            </div>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder={
+                status === 'absent' ? '欠席理由（任意）'
+                : status === 'leave_early' ? '例: 16:30 保護者迎え / 早退理由'
+                : status === 'late' ? '例: 病院後 15:30 合流'
+                : '本日の特記事項があれば記入'
+              }
+              rows={4}
+              style={{
+                width: '100%',
+                fontSize: 13,
+                fontFamily: 'var(--font-body)',
+                resize: 'vertical',
+              }}
+            />
+          </div>
+
+          {/* プレビュー */}
+          {(status !== 'present' || note.trim()) && (
+            <div style={{
+              padding: '10px 12px',
+              background: 'var(--bg)',
+              borderRadius: 8,
+              borderLeft: `3px solid ${CHILD_DAY_STATUS_BY_ID[status]?.color || 'var(--ink-faint)'}`,
+              fontSize: 11.5,
+            }}>
+              <div style={{ fontSize: 9.5, color: 'var(--ink-muted)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+                プレビュー
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: note.trim() ? 4 : 0 }}>
+                <span style={{
+                  fontSize: 8.5, fontWeight: 800,
+                  color: '#fff',
+                  background: CHILD_DAY_STATUS_BY_ID[status]?.color,
+                  padding: '1px 5px', borderRadius: 3,
+                }}>
+                  {CHILD_DAY_STATUS_BY_ID[status]?.short}
+                </span>
+                <span style={{ fontWeight: 700 }}>{child.name}</span>
+              </div>
+              {note.trim() && (
+                <div style={{ color: 'var(--ink-soft)', fontSize: 11 }}>{note}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* フッタ */}
+        <div style={{
+          padding: '12px 22px', borderTop: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--surface-soft)',
+        }}>
+          <button
+            onClick={clear}
+            className="btn btn-ghost btn-sm"
+            disabled={!childDayStatus[childId]}
+            style={{ color: 'var(--danger)' }}
+          >
+            <X size={11} /> クリア
+          </button>
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} className="btn btn-ghost btn-sm">キャンセル</button>
+          <button onClick={save} className="btn btn-primary btn-sm">
+            <CheckCircle2 size={12} /> 保存
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 車両クイック編集モーダル（車両ボタン横の🔧から開く）
+// ═══════════════════════════════════════════════════════════════
+function VehicleQuickEditModal({ vehicleId, vehicleStatus, setVehicleStatus, assignments, onClose }) {
+  const vehicle = VEHICLE_BY_ID[vehicleId]
+  const current = vehicleStatus[vehicleId] || { status: 'active', note: '' }
+  const [status, setStatus] = useState(current.status)
+  const [note, setNote] = useState(current.note || '')
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // この車両が何便に使われているか
+  const usage = []
+  assignments?.facilityBlocks?.forEach(block => {
+    block.trips.forEach(trip => {
+      if (trip.vehicle === vehicleId) {
+        usage.push({
+          facilityShort: FACILITY_BY_ID[block.facility]?.short || block.facility,
+          tripNo: trip.tripNo,
+          childCount: trip.childIds.length,
+        })
+      }
+    })
+  })
+
+  const save = () => {
+    setVehicleStatus(prev => ({ ...prev, [vehicleId]: { status, note: note.trim() } }))
+    onClose()
+  }
+
+  if (!vehicle) return null
+  const willBeUnavailable = !canUseVehicle({ status })
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(28, 30, 38, 0.55)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20, animation: 'fadeIn 0.18s ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--radius-lg)',
+          width: 'min(500px, 96vw)',
+          display: 'flex', flexDirection: 'column',
+          boxShadow: 'var(--shadow-lg)',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: '16px 22px', borderBottom: '1px solid var(--line)',
+          background: 'var(--surface-soft)',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 10,
+            background: vehicle.color,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff',
+          }}>
+            <Car size={17} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>
+              {vehicle.name}
+              <span style={{ fontSize: 10.5, color: 'var(--ink-muted)', fontWeight: 500, marginLeft: 8 }}>
+                定員 {vehicle.capacity}名
+              </span>
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--ink-muted)', marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+              {vehicle.plate} · 運転 {vehicle.driver}
+            </div>
+          </div>
+          <button onClick={onClose} className="btn btn-ghost btn-sm" aria-label="閉じる">
+            <X size={13} />
+          </button>
+        </div>
+
+        <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* 使用中便の表示 */}
+          {usage.length > 0 && (
+            <div style={{
+              padding: '8px 12px',
+              background: 'var(--bg)',
+              borderRadius: 8,
+              fontSize: 11,
+              borderLeft: '3px solid var(--accent)',
+            }}>
+              <span style={{ fontWeight: 700, color: 'var(--ink-soft)' }}>
+                本日 <span className="num" style={{ color: 'var(--accent)' }}>{usage.length}</span> 便で使用中:
+              </span>{' '}
+              <span style={{ color: 'var(--ink-muted)' }}>
+                {usage.map(u => `${u.facilityShort}#${u.tripNo}（${u.childCount}名）`).join(' · ')}
+              </span>
+            </div>
+          )}
+
+          <div>
+            <div style={{
+              fontSize: 10.5, fontWeight: 700, color: 'var(--ink-muted)',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              marginBottom: 8,
+            }}>
+              当日ステータス
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+              {DAY_STATUSES.map(s => {
+                const active = status === s.id
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setStatus(s.id)}
+                    title={s.desc}
+                    style={{
+                      padding: '10px 4px',
+                      borderRadius: 8,
+                      border: `1.5px solid ${active ? s.color : 'var(--line)'}`,
+                      background: active ? `${s.color}18` : 'var(--surface)',
+                      color: active ? s.color : 'var(--ink-soft)',
+                      fontWeight: active ? 800 : 600,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      transition: 'all 0.1s',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', gap: 4,
+                    }}
+                  >
+                    <span style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: s.color,
+                      boxShadow: active ? `0 0 0 3px ${s.color}30` : 'none',
+                    }} />
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div style={{
+              fontSize: 10.5, fontWeight: 700, color: 'var(--ink-muted)',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              marginBottom: 8,
+            }}>
+              メモ
+            </div>
+            <input
+              type="text"
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder={
+                status === 'maintenance' ? '例: 定期点検（15:00再始動予定）'
+                : status === 'substitute' ? '例: 代車レンタル使用中'
+                : status === 'off' ? '例: ドライバー休暇'
+                : '（任意）'
+              }
+              style={{ width: '100%', fontSize: 13 }}
+            />
+          </div>
+
+          {/* 警告 */}
+          {willBeUnavailable && usage.length > 0 && (
+            <div style={{
+              padding: '8px 12px',
+              background: 'var(--danger-soft)',
+              borderLeft: '3px solid var(--danger)',
+              borderRadius: 6,
+              fontSize: 11,
+              color: 'var(--danger)',
+              fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <AlertTriangle size={13} />
+              <span>この車両を使用不可にすると、配車済みの {usage.length} 便が実行できなくなります。</span>
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          padding: '12px 22px', borderTop: '1px solid var(--line)',
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'var(--surface-soft)',
+        }}>
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} className="btn btn-ghost btn-sm">キャンセル</button>
+          <button onClick={save} className="btn btn-primary btn-sm">
+            <CheckCircle2 size={12} /> 保存
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

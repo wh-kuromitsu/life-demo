@@ -1,4 +1,4 @@
-// 未配置者パネル - 松浦先生の認知モデル継承
+// 未配置者パネル - マキノ先生の認知モデル継承
 // 学校ごとグルーピング → 時間順 → 11分以上の時間差で自動的に便分け
 // VBA `UpdateUnassignedPanel` の動作を継承
 
@@ -27,7 +27,7 @@ export default function UnassignedPanel({ unassignedIds = [], onAssign, selected
           <AlertTriangle size={12} /> {unassignedIds.length}名が未配置
         </div>
         <div style={{ lineHeight: 1.55 }}>
-          場所ごとに時間順でソート。<span className="num">11分以上</span>の間隔は別便の目安（松浦先生の運用モデル）
+          場所ごとに時間順でソート。<span className="num">11分以上</span>の間隔は別便の目安（マキノ先生の運用モデル）
         </div>
       </div>
 
