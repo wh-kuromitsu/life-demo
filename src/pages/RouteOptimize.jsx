@@ -607,10 +607,6 @@ function Step1({
             </button>
             {calculating && (
               <div style={{ marginTop: 14, fontSize: 11, color: 'rgba(255,255,255,0.65)', fontFamily: 'var(--font-mono)', lineHeight: 1.7 }}>
-                <div>→ 方面クラスタリング（K-means）</div>
-                <div>→ Pattern A: OR-Tools VRP</div>
-                <div>→ Pattern B: K-Means + 近傍法</div>
-                <div>→ 制約充足チェック...</div>
               </div>
             )}
 
