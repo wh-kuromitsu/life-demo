@@ -602,7 +602,7 @@ function Step1({
               {calculating ? (
                 <><RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> AI実行中...</>
               ) : (
-                <><Wand2 size={15} /> AIで初期案を作成</>
+                <><dev size={15} /> AIで初期案を作成</>
               )}
             </button>
             {calculating && (
