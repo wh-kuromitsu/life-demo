@@ -104,10 +104,8 @@ export default function Dashboard({ facilityId, setPage }) {
                 onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.08)'}
                 onMouseLeave={e => e.currentTarget.style.filter = 'brightness(1)'}
               >
-                <span style={{ fontSize: 22 }}>⚡</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14 }}>今日のルート最適化</div>
-                  <div style={{ fontSize: 10, opacity: 0.85, fontWeight: 400, marginTop: 2 }}>Pattern A/B を実行して確定する</div>
                 </div>
                 <ArrowUpRight size={16} />
               </button>
